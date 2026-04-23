@@ -1,0 +1,37 @@
+@Metadata.layer: #CORE
+annotate entity ZI_HR_BANK_ACCOUNT with
+{
+  @UI.headerInfo: {
+    typeName: 'Salary Account',
+    typeNamePlural: 'Salary Accounts',
+    title: { value: 'BankText' }
+  }
+
+  @UI.presentationVariant: [ { sortOrder: [ { by: 'Pernr', direction: #ASC } ] } ]
+
+  @UI.lineItem: [ { position: 10, label: 'Bank Name' } ]
+  @UI.identification: [ { position: 10, label: 'Bank Name' } ]
+  BankText;
+
+  @UI.lineItem: [ { position: 20, label: 'Account Number' } ]
+  @UI.identification: [ { position: 20, label: 'Account Number' } ]
+  BankNo;
+
+  @UI.lineItem: [
+    { position: 30, type: #FOR_ACTION, dataAction: 'ChangeAccount', label: 'Change' },
+    { position: 40, type: #FOR_ACTION, dataAction: 'DeleteAccount', label: 'Delete' }
+  ]
+  Pernr;
+
+  @UI.hidden: true
+  BankCode;
+
+  @UI.hidden: true
+  Subty;
+
+  @UI.hidden: true
+  Begda;
+
+  @UI.hidden: true
+  Endda;
+}

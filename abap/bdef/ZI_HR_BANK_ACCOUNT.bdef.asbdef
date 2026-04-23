@@ -1,0 +1,16 @@
+unmanaged implementation in class zbp_i_hr_bank_account unique;
+strict ( 2 );
+
+define behavior for ZI_HR_BANK_ACCOUNT alias Account
+lock master
+authorization master ( instance )
+{
+  field ( readonly ) Pernr, Subty, Begda, Endda, BankText;
+
+  action ( features : instance ) ChangeAccount
+    parameter ZI_HR_BANK_CHG_PARAM
+    result [1] $self;
+
+  action ( features : instance ) DeleteAccount
+    result [1] $self;
+}

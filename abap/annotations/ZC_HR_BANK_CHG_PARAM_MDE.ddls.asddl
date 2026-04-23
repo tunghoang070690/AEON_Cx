@@ -1,0 +1,15 @@
+@Metadata.layer: #CORE
+annotate entity ZI_HR_BANK_CHG_PARAM with
+{
+  @Consumption.valueHelpDefinition: [ {
+    entity: {
+      name: 'ZI_HR_BANK_OPTION',
+      element: 'BankCode'
+    }
+  } ]
+  @UI.identification: [ { position: 10, label: 'Bank Name' } ]
+  BankCode;
+
+  @UI.identification: [ { position: 20, label: 'Account Number' } ]
+  BankNo;
+}

@@ -1,0 +1,6 @@
+@EndUserText.label: 'HR Bank Account - Change Action Parameter'
+define abstract entity ZI_HR_BANK_CHG_PARAM
+{
+  BankCode : abap.char(15);
+  BankNo   : abap.char(30);
+}

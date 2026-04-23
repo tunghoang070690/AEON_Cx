@@ -1,0 +1,13 @@
+@EndUserText.label: 'HR Salary Bank Account - Current User'
+@ObjectModel.query.implementedBy: 'ABAP:ZCL_HR_BANK_QP'
+@AccessControl.authorizationCheck: #NOT_REQUIRED
+define root custom entity ZI_HR_BANK_ACCOUNT
+{
+  key Pernr      : pernr_d;
+      BankText   : abap.char(60);
+      BankCode   : abap.char(15);
+      BankNo     : abap.char(30);
+      Subty      : abap.char(4);
+      Begda      : abap.dats;
+      Endda      : abap.dats;
+}

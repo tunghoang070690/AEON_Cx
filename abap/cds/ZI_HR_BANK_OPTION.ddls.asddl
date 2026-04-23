@@ -1,0 +1,8 @@
+@EndUserText.label: 'HR Salary Bank - Valid Bank Options'
+@ObjectModel.query.implementedBy: 'ABAP:ZCL_HR_BANK_OPT_QP'
+@AccessControl.authorizationCheck: #NOT_REQUIRED
+define root custom entity ZI_HR_BANK_OPTION
+{
+  key BankCode : zthr0021-zcode;
+      BankText : zthr0021-zcode_text1;
+}

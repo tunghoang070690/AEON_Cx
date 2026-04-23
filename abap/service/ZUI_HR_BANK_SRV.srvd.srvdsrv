@@ -1,0 +1,5 @@
+@EndUserText.label: 'HR Bank Account Service'
+define service ZUI_HR_BANK_SRV {
+  expose ZI_HR_BANK_ACCOUNT as BankAccount;
+  expose ZI_HR_BANK_OPTION  as BankOption;
+}
