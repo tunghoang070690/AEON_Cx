@@ -41,6 +41,7 @@ TYPES: BEGIN OF ty_log,
 TYPES ty_t_log TYPE STANDARD TABLE OF ty_log WITH EMPTY KEY.
 
 DATA gv_title TYPE c LENGTH 40 VALUE 'Upload Employee Actions'.
+DATA gv_save_ready TYPE abap_bool VALUE abap_false.
 DATA gs_fk1 TYPE smp_dyntxt.
 DATA gs_fk2 TYPE smp_dyntxt.
 
@@ -159,6 +160,7 @@ CLASS lcl_app DEFINITION FINAL.
   PUBLIC SECTION.
     CLASS-METHODS set_function_texts.
     CLASS-METHODS handle_download RAISING lcx_upload.
+    CLASS-METHODS f4_file CHANGING cv_file TYPE rlgrap-filename.
     METHODS constructor IMPORTING iv_file TYPE rlgrap-filename.
     METHODS execute_upload RAISING lcx_upload.
     METHODS save_pending RAISING lcx_upload.
@@ -169,37 +171,6 @@ CLASS lcl_app DEFINITION FINAL.
     DATA mv_file TYPE rlgrap-filename.
     CLASS-METHODS download_template RETURNING VALUE(rv_fullpath) TYPE string RAISING lcx_upload.
 ENDCLASS.
-
-INITIALIZATION.
-  lcl_app=>set_function_texts( ).
-
-AT SELECTION-SCREEN OUTPUT.
-  lcl_app=>set_function_texts( ).
-
-AT SELECTION-SCREEN.
-  TRY.
-      CASE sscrfields-ucomm.
-        WHEN 'FC01'.
-          lcl_app=>handle_download( ).
-          sscrfields-ucomm = ''.
-          LEAVE TO SCREEN sy-dynnr.
-        WHEN 'FC02'.
-          NEW lcl_app(
-            iv_file = p_file )->save_pending( ).
-          sscrfields-ucomm = ''.
-          LEAVE TO SCREEN sy-dynnr.
-      ENDCASE.
-    CATCH lcx_upload INTO DATA(lx_scr).
-      MESSAGE lx_scr->text TYPE 'S' DISPLAY LIKE 'E'.
-  ENDTRY.
-
-START-OF-SELECTION.
-  TRY.
-      NEW lcl_app(
-        iv_file = p_file )->execute_upload( ).
-    CATCH lcx_upload INTO DATA(lx_main).
-      MESSAGE lx_main->text TYPE 'S' DISPLAY LIKE 'E'.
-  ENDTRY.
 
 CLASS lcx_upload IMPLEMENTATION.
   METHOD constructor.
@@ -526,8 +497,9 @@ CLASS lcl_hr_service IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD validate_all.
+    DATA lv_locked_ok TYPE abap_bool.
+
     LOOP AT it_input INTO DATA(ls_input).
-      DATA lv_locked_ok TYPE abap_bool.
       lv_locked_ok = lock_pernr(
         iv_pernr  = ls_input-pernr
         iv_row_no = ls_input-row_no ).
@@ -620,7 +592,6 @@ CLASS lcl_hr_service IMPLEMENTATION.
 
   METHOD post_row.
     rv_ok = abap_false.
-
     IF post_0000( is_input = is_input ) = abap_false.
       RETURN.
     ENDIF.
@@ -630,7 +601,6 @@ CLASS lcl_hr_service IMPLEMENTATION.
     IF post_0002( is_input = is_input ) = abap_false.
       RETURN.
     ENDIF.
-
     rv_ok = abap_true.
   ENDMETHOD.
 
@@ -828,15 +798,12 @@ ENDCLASS.
 
 CLASS lcl_app IMPLEMENTATION.
   METHOD set_function_texts.
-    DATA lt_pending TYPE ty_t_input.
-
     gs_fk1-icon_id   = icon_export.
     gs_fk1-icon_text = 'Download Layout'.
     gs_fk1-quickinfo = 'Download Excel template'.
     sscrfields-functxt_01 = gs_fk1.
 
-    lt_pending = lcl_memory=>load_pending( ).
-    IF lt_pending IS NOT INITIAL.
+    IF gv_save_ready = abap_true.
       gs_fk2-icon_id   = icon_system_save.
       gs_fk2-icon_text = 'Save'.
       gs_fk2-quickinfo = 'Save validated data to DB'.
@@ -853,6 +820,32 @@ CLASS lcl_app IMPLEMENTATION.
     ENDIF.
   ENDMETHOD.
 
+  METHOD f4_file.
+    DATA lt_files TYPE filetable.
+    DATA lv_rc TYPE i.
+    DATA ls_file TYPE file_table.
+
+    TRY.
+        cl_gui_frontend_services=>file_open_dialog(
+          EXPORTING
+            default_extension = 'xlsx'
+            file_filter       = 'Excel (*.xlsx)|*.xlsx|'
+          CHANGING
+            file_table        = lt_files
+            rc                = lv_rc ).
+        IF lv_rc > 0.
+          READ TABLE lt_files INDEX 1 INTO ls_file.
+          IF sy-subrc = 0.
+            cv_file = ls_file-filename.
+          ENDIF.
+        ENDIF.
+      CATCH cx_root.
+        CALL FUNCTION 'KD_GET_FILENAME_ON_F4'
+          CHANGING
+            file_name = cv_file.
+    ENDTRY.
+  ENDMETHOD.
+
   METHOD constructor.
     mv_file = iv_file.
   ENDMETHOD.
@@ -866,6 +859,7 @@ CLASS lcl_app IMPLEMENTATION.
     DATA lv_pernr_initial TYPE pernr_d.
 
     lcl_memory=>clear_pending( ).
+    gv_save_ready = abap_false.
 
     lo_logger = NEW lcl_logger( ).
     lo_reader = NEW lcl_excel_reader( iv_file = mv_file ).
@@ -884,6 +878,7 @@ CLASS lcl_app IMPLEMENTATION.
     ENDIF.
 
     lcl_memory=>save_pending( it_input = lt_input ).
+    gv_save_ready = abap_true.
     lo_logger->add(
       iv_row_no  = 0
       iv_pernr   = lv_pernr_initial
@@ -910,6 +905,7 @@ CLASS lcl_app IMPLEMENTATION.
 
     IF lo_logger->has_error( ) = abap_false.
       lcl_memory=>clear_pending( ).
+      gv_save_ready = abap_false.
     ENDIF.
   ENDMETHOD.
 
@@ -967,3 +963,35 @@ CLASS lcl_app IMPLEMENTATION.
     rv_fullpath = lv_full.
   ENDMETHOD.
 ENDCLASS.
+
+INITIALIZATION.
+  lcl_app=>set_function_texts( ).
+
+AT SELECTION-SCREEN OUTPUT.
+  lcl_app=>set_function_texts( ).
+
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_file.
+  lcl_app=>f4_file( CHANGING cv_file = p_file ).
+
+AT SELECTION-SCREEN.
+  TRY.
+      CASE sscrfields-ucomm.
+        WHEN 'FC01'.
+          lcl_app=>handle_download( ).
+          sscrfields-ucomm = ''.
+          LEAVE TO SCREEN sy-dynnr.
+        WHEN 'FC02'.
+          NEW lcl_app( iv_file = p_file )->save_pending( ).
+          sscrfields-ucomm = ''.
+          LEAVE TO SCREEN sy-dynnr.
+      ENDCASE.
+    CATCH lcx_upload INTO DATA(lx_scr).
+      MESSAGE lx_scr->text TYPE 'S' DISPLAY LIKE 'E'.
+  ENDTRY.
+
+START-OF-SELECTION.
+  TRY.
+      NEW lcl_app( iv_file = p_file )->execute_upload( ).
+    CATCH lcx_upload INTO DATA(lx_main).
+      MESSAGE lx_main->text TYPE 'S' DISPLAY LIKE 'E'.
+  ENDTRY.
