@@ -105,7 +105,7 @@ CLASS lcl_memory DEFINITION FINAL.
     CLASS-METHODS load_pending RETURNING VALUE(rt_input) TYPE ty_t_input.
     CLASS-METHODS clear_pending.
   PRIVATE SECTION.
-    CONSTANTS gc_memid TYPE string VALUE 'ZHR_PA_UPLOAD_PENDING'.
+    CONSTANTS gc_memid TYPE c LENGTH 24 VALUE 'ZHR_PA_UPLOAD_PENDING'.
 ENDCLASS.
 
 CLASS lcl_excel_reader DEFINITION FINAL.
@@ -427,7 +427,7 @@ CLASS lcl_excel_reader IMPLEMENTATION.
 
     TRY.
         lo_excel = NEW cl_fdt_xl_spreadsheet(
-          document_name = mv_file
+          document_name = CONV string( mv_file )
           xdocument     = iv_xstr ).
 
         lo_excel->if_fdt_doc_spreadsheet~get_worksheet_names(
@@ -531,9 +531,11 @@ CLASS lcl_hr_service IMPLEMENTATION.
 
   METHOD validate_all.
     LOOP AT it_input INTO DATA(ls_input).
-      IF lock_pernr(
-           iv_pernr  = ls_input-pernr
-           iv_row_no = ls_input-row_no ) = abap_false.
+      DATA lv_locked_ok TYPE abap_bool.
+      lv_locked_ok = lock_pernr(
+        iv_pernr  = ls_input-pernr
+        iv_row_no = ls_input-row_no ).
+      IF lv_locked_ok = abap_false.
         CONTINUE.
       ENDIF.
 
@@ -546,12 +548,16 @@ CLASS lcl_hr_service IMPLEMENTATION.
   METHOD save_all.
     DATA lt_locked TYPE SORTED TABLE OF pernr_d WITH UNIQUE KEY table_line.
     DATA lv_failed TYPE abap_bool VALUE abap_false.
+    DATA lv_locked_ok TYPE abap_bool.
+    DATA lv_pernr_initial TYPE pernr_d.
 
     LOOP AT it_input INTO DATA(ls_input).
-      IF line_exists( lt_locked[ table_line = ls_input-pernr ] ) = abap_false.
-        IF lock_pernr(
-             iv_pernr  = ls_input-pernr
-             iv_row_no = ls_input-row_no ) = abap_false.
+      READ TABLE lt_locked WITH TABLE KEY table_line = ls_input-pernr TRANSPORTING NO FIELDS.
+      IF sy-subrc <> 0.
+        lv_locked_ok = lock_pernr(
+          iv_pernr  = ls_input-pernr
+          iv_row_no = ls_input-row_no ).
+        IF lv_locked_ok = abap_false.
           lv_failed = abap_true.
           EXIT.
         ENDIF.
@@ -568,7 +574,7 @@ CLASS lcl_hr_service IMPLEMENTATION.
       CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'.
       mo_logger->add(
         iv_row_no  = 0
-        iv_pernr   = ''
+        iv_pernr   = lv_pernr_initial
         iv_infty   = ''
         iv_msgty   = 'E'
         iv_message = 'Save thất bại. Đã rollback toàn bộ dữ liệu.' ).
@@ -578,7 +584,7 @@ CLASS lcl_hr_service IMPLEMENTATION.
           wait = abap_true.
       mo_logger->add(
         iv_row_no  = 0
-        iv_pernr   = ''
+        iv_pernr   = lv_pernr_initial
         iv_infty   = ''
         iv_msgty   = 'S'
         iv_message = 'Lưu dữ liệu thành công.' ).
@@ -862,6 +868,7 @@ CLASS lcl_app IMPLEMENTATION.
     DATA lo_hr TYPE REF TO lcl_hr_service.
     DATA lt_input TYPE ty_t_input.
     DATA lt_parse TYPE ty_t_log.
+    DATA lv_pernr_initial TYPE pernr_d.
 
     lcl_memory=>clear_pending( ).
 
@@ -880,7 +887,7 @@ CLASS lcl_app IMPLEMENTATION.
       IF lo_logger->has_error( ) = abap_false.
         lo_logger->add(
           iv_row_no  = 0
-          iv_pernr   = ''
+          iv_pernr   = lv_pernr_initial
           iv_infty   = ''
           iv_msgty   = 'S'
           iv_message = 'Test mode OK. Không ghi DB.' ).
@@ -898,7 +905,7 @@ CLASS lcl_app IMPLEMENTATION.
     lcl_memory=>save_pending( it_input = lt_input ).
     lo_logger->add(
       iv_row_no  = 0
-      iv_pernr   = ''
+      iv_pernr   = lv_pernr_initial
       iv_infty   = ''
       iv_msgty   = 'S'
       iv_message = 'Validate thành công. Nhấn Save để lưu DB.' ).
