@@ -49,7 +49,6 @@ SELECTION-SCREEN FUNCTION KEY 2.
 
 SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE gv_title.
 PARAMETERS p_file TYPE rlgrap-filename LOWER CASE.
-PARAMETERS p_test AS CHECKBOX DEFAULT abap_true.
 SELECTION-SCREEN END OF BLOCK b1.
 
 CLASS lcx_upload DEFINITION FINAL INHERITING FROM cx_static_check CREATE PUBLIC.
@@ -160,7 +159,7 @@ CLASS lcl_app DEFINITION FINAL.
   PUBLIC SECTION.
     CLASS-METHODS set_function_texts.
     CLASS-METHODS handle_download RAISING lcx_upload.
-    METHODS constructor IMPORTING iv_file TYPE rlgrap-filename iv_test TYPE abap_bool.
+    METHODS constructor IMPORTING iv_file TYPE rlgrap-filename.
     METHODS execute_upload RAISING lcx_upload.
     METHODS save_pending RAISING lcx_upload.
   PRIVATE SECTION.
@@ -168,7 +167,6 @@ CLASS lcl_app DEFINITION FINAL.
     CONSTANTS c_objid TYPE wwwdatatab-objid VALUE 'ZHR_UPL_XLSX'.
     CONSTANTS c_dft   TYPE string VALUE 'zhr_pa_upload_layout.xlsx'.
     DATA mv_file TYPE rlgrap-filename.
-    DATA mv_test TYPE abap_bool.
     CLASS-METHODS download_template RETURNING VALUE(rv_fullpath) TYPE string RAISING lcx_upload.
 ENDCLASS.
 
@@ -187,8 +185,7 @@ AT SELECTION-SCREEN.
           LEAVE TO SCREEN sy-dynnr.
         WHEN 'FC02'.
           NEW lcl_app(
-            iv_file = p_file
-            iv_test = p_test )->save_pending( ).
+            iv_file = p_file )->save_pending( ).
           sscrfields-ucomm = ''.
           LEAVE TO SCREEN sy-dynnr.
       ENDCASE.
@@ -199,8 +196,7 @@ AT SELECTION-SCREEN.
 START-OF-SELECTION.
   TRY.
       NEW lcl_app(
-        iv_file = p_file
-        iv_test = p_test )->execute_upload( ).
+        iv_file = p_file )->execute_upload( ).
     CATCH lcx_upload INTO DATA(lx_main).
       MESSAGE lx_main->text TYPE 'S' DISPLAY LIKE 'E'.
   ENDTRY.
@@ -840,7 +836,7 @@ CLASS lcl_app IMPLEMENTATION.
     sscrfields-functxt_01 = gs_fk1.
 
     lt_pending = lcl_memory=>load_pending( ).
-    IF p_test = abap_false AND lt_pending IS NOT INITIAL.
+    IF lt_pending IS NOT INITIAL.
       gs_fk2-icon_id   = icon_system_save.
       gs_fk2-icon_text = 'Save'.
       gs_fk2-quickinfo = 'Save validated data to DB'.
@@ -859,7 +855,6 @@ CLASS lcl_app IMPLEMENTATION.
 
   METHOD constructor.
     mv_file = iv_file.
-    mv_test = iv_test.
   ENDMETHOD.
 
   METHOD execute_upload.
@@ -882,20 +877,6 @@ CLASS lcl_app IMPLEMENTATION.
         et_log   = lt_parse ).
     lo_logger->add_table( it_log = lt_parse ).
 
-    IF mv_test = abap_true.
-      lo_hr->validate_all( it_input = lt_input ).
-      IF lo_logger->has_error( ) = abap_false.
-        lo_logger->add(
-          iv_row_no  = 0
-          iv_pernr   = lv_pernr_initial
-          iv_infty   = ''
-          iv_msgty   = 'S'
-          iv_message = 'Test mode OK. Không ghi DB.' ).
-      ENDIF.
-      lo_logger->display( ).
-      RETURN.
-    ENDIF.
-
     lo_hr->validate_all( it_input = lt_input ).
     IF lo_logger->has_error( ) = abap_true.
       lo_logger->display( ).
@@ -916,10 +897,6 @@ CLASS lcl_app IMPLEMENTATION.
     DATA lo_logger TYPE REF TO lcl_logger.
     DATA lo_hr TYPE REF TO lcl_hr_service.
     DATA lt_pending TYPE ty_t_input.
-
-    IF mv_test = abap_true.
-      RAISE EXCEPTION NEW lcx_upload( iv_text = 'Bỏ check Test mode trước khi Save.' ).
-    ENDIF.
 
     lt_pending = lcl_memory=>load_pending( ).
     IF lt_pending IS INITIAL.
