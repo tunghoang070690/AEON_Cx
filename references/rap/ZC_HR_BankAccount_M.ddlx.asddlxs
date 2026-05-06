@@ -1,0 +1,23 @@
+@Metadata.layer: #CORE
+annotate view ZC_HR_BankAccount with
+{
+  @EndUserText.label: 'Personnel Number'
+  PersonnelNumber;
+
+  @EndUserText.label: 'Bank'
+  @Consumption.valueHelpDefinition: [{ entity: { name: 'ZI_HR_BankCodeText',
+                                                element: 'BankCode' },
+                                      additionalBinding: [{ localElement: 'BankKey',
+                                                            element:           'BankCode' }] }]
+  BankKey;
+
+  @EndUserText.label: 'Bank Account Number'
+  BankAccountNumber;
+
+  @EndUserText.label: 'Bank Country'
+  BankCountry;
+
+  @EndUserText.label: 'Bank Name'
+  @UI.hidden: true
+  BankName;
+}

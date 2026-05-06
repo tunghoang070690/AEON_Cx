@@ -1,0 +1,17 @@
+managed implementation in class zbp_i_hr_bankaccount unique;
+strict ( 2 );
+define behavior for ZI_HR_BankAccount alias BankAccount
+persistent table pa0009
+lock master
+authorization master ( instance )
+{
+  create;
+  update;
+  delete;
+
+  field ( numbering : manual, readonly ) PersonnelNumber, Infotype, Subtype, ValidFrom, ValidTo;
+  field ( mandatory ) BankKey, BankAccountNumber;
+
+  validation ValidateBankCode on save { create; update; }
+  determination SetDefaults on modify { create; update; }
+}

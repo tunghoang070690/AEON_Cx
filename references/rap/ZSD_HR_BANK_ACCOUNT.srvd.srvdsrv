@@ -1,0 +1,5 @@
+@EndUserText.label: 'HR Bank Account OData API'
+define service ZSD_HR_BANK_ACCOUNT {
+  expose ZC_HR_BankAccount as BankAccount;
+  expose ZI_HR_BankCodeText as BankCodeText;
+}
