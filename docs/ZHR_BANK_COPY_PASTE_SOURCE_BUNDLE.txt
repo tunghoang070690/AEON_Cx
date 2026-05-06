@@ -1,0 +1,930 @@
+=== ZHR_BANK.prog.abap ===
+*&---------------------------------------------------------------------*
+*& Report ZHR_BANK  (Executable Program / Dialog Transaction Entry)
+*&---------------------------------------------------------------------*
+*& Bank salary account inquiry & maintenance (PA0009 subty 0).
+*& Architecture: all logic in global classes; MODULEs delegate only.
+*& Transaction: ZHRB → Dialog, program ZHR_BANK, screen 0100.
+*&---------------------------------------------------------------------*
+REPORT zhr_bank NO STANDARD PAGE HEADING LINE-SIZE 1023.
+
+INCLUDE zhr_bank_top.
+INCLUDE zhr_bank_pbo.
+INCLUDE zhr_bank_pai.
+
+START-OF-SELECTION.
+  " SE38 direct run: enter main dynpro. SE93 dialog transactions skip this block.
+  CALL SCREEN 0100.
+
+=== ZHR_BANK_TOP.prog.abap ===
+*&---------------------------------------------------------------------*
+*& Include ZHR_BANK_TOP
+*&---------------------------------------------------------------------*
+*& Screen globals required by Screen Painter transport (cannot bind class attrs).
+DATA ok_code TYPE sy-ucomm.
+
+DATA gv_ch_bankl TYPE zthr0021-zcode.
+DATA gv_ch_bankn TYPE bankn.
+
+=== ZHR_BANK_PBO.prog.abap ===
+*&---------------------------------------------------------------------*
+*& Include ZHR_BANK_PBO  (Output modules — delegate only)
+*&---------------------------------------------------------------------*
+
+MODULE status_0100 OUTPUT.
+  zcl_hr_bank_ui=>screen_0100_pbo( ).
+ENDMODULE.
+
+
+MODULE status_0200 OUTPUT.
+  zcl_hr_bank_ui=>screen_0200_pbo( ).
+ENDMODULE.
+
+
+MODULE status_0300 OUTPUT.
+  zcl_hr_bank_ui=>screen_0300_pbo( ).
+ENDMODULE.
+
+=== ZHR_BANK_PAI.prog.abap ===
+*&---------------------------------------------------------------------*
+*& Include ZHR_BANK_PAI  (Input modules — delegate only)
+*&---------------------------------------------------------------------*
+
+MODULE user_command_0100 INPUT.
+  zcl_hr_bank_ui=>screen_0100_pai(
+    iv_ucomm = ok_code
+    CHANGING
+      cv_bankl = gv_ch_bankl
+      cv_bankn = gv_ch_bankn ).
+  CLEAR ok_code.
+ENDMODULE.
+
+
+MODULE user_command_0200 INPUT.
+  zcl_hr_bank_ui=>screen_0200_pai(
+    iv_ucomm     = ok_code
+    iv_bank_code = gv_ch_bankl
+    iv_bankn     = gv_ch_bankn ).
+  CLEAR ok_code.
+ENDMODULE.
+
+
+MODULE user_command_0300 INPUT.
+  zcl_hr_bank_ui=>screen_0300_pai( ok_code ).
+  CLEAR ok_code.
+ENDMODULE.
+
+
+=== ZCX_HR_BANK.clas.abap ===
+*&---------------------------------------------------------------------*
+*& Class ZCX_HR_BANK
+*&---------------------------------------------------------------------*
+CLASS zcx_hr_bank DEFINITION
+  PUBLIC
+  INHERITING FROM cx_static_check
+  FINAL
+  CREATE PUBLIC .
+
+  PUBLIC SECTION.
+
+    CONSTANTS:
+      BEGIN OF gc_codes,
+        no_personnel    TYPE string VALUE `NO_PERSONNEL`,
+        validation_fail TYPE string VALUE `VALIDATION`,
+        hr_operation    TYPE string VALUE `HR_OPERATION`,
+      END OF gc_codes.
+
+    DATA mv_code TYPE string READ-ONLY.
+    DATA mv_text TYPE string READ-ONLY.
+
+    METHODS constructor
+      IMPORTING
+        !iv_text TYPE string OPTIONAL
+        !iv_code TYPE string OPTIONAL
+        !previous LIKE previous OPTIONAL.
+
+ENDCLASS.
+
+
+CLASS zcx_hr_bank IMPLEMENTATION.
+
+  METHOD constructor.
+    super->constructor( previous = previous ).
+    mv_text = iv_text.
+    mv_code = iv_code.
+    CLEAR textid.
+    if_t100_message~t100key = if_t100_message=>default_textid.
+  ENDMETHOD.
+
+ENDCLASS.
+
+=== ZCL_HR_BANK_TYPES.clas.abap ===
+*&---------------------------------------------------------------------*
+*& Class ZCL_HR_BANK_TYPES
+*&---------------------------------------------------------------------*
+*& DTOs and shared constants (no business logic; no instantiation).
+*&---------------------------------------------------------------------*
+CLASS zcl_hr_bank_types DEFINITION
+  PUBLIC
+  FINAL
+  CREATE PUBLIC .
+
+  PUBLIC SECTION.
+
+    TYPES ty_pernr TYPE pernr_d.
+    TYPES ty_bankk TYPE bankk.
+    TYPES ty_bankn TYPE bankn.
+    TYPES ty_subty TYPE subty.
+    TYPES ty_begda TYPE begda.
+    TYPES ty_endda TYPE endda.
+
+    TYPES: BEGIN OF ty_alv_row,
+             bank_name TYPE zthr0021-zcode_text1,
+             bankn     TYPE bankn,
+           END OF ty_alv_row.
+    TYPES tt_alv_grid TYPE STANDARD TABLE OF ty_alv_row WITH EMPTY KEY.
+
+    TYPES: BEGIN OF ty_bank_snapshot,
+             has_record TYPE abap_bool,
+             pernr      TYPE pernr_d,
+             subty      TYPE subty,
+             begda      TYPE begda,
+             endda      TYPE endda,
+             bankl      TYPE bankk,
+             bankn      TYPE bankn,
+             bank_name  TYPE zthr0021-zcode_text1,
+           END OF ty_bank_snapshot.
+
+    TYPES: BEGIN OF ty_bank_code,
+             zcode       TYPE zthr0021-zcode,
+             zcode_text1 TYPE zthr0021-zcode_text1,
+           END OF ty_bank_code.
+    TYPES tt_bank_code TYPE STANDARD TABLE OF ty_bank_code WITH EMPTY KEY.
+
+    CONSTANTS:
+      mc_bukrs        TYPE bukrs VALUE '1000',
+      mc_code_group   TYPE zthr0021-zcode_grup VALUE 'A004',
+      mc_infty        TYPE infty VALUE '0009',
+      mc_subty_salary TYPE subty VALUE '0',
+      mc_banks        TYPE banks VALUE 'KR',
+      mc_endda_high   TYPE endda VALUE '99991231'.
+
+ENDCLASS.
+CLASS zcl_hr_bank_types IMPLEMENTATION.
+ENDCLASS.
+
+=== ZIF_HR_BANK_REPOSITORY.intf.abap ===
+*&---------------------------------------------------------------------*
+*& Interface ZIF_HR_BANK_REPOSITORY
+*&---------------------------------------------------------------------*
+*& Centralizes table reads (single source for SELECT).
+*&---------------------------------------------------------------------*
+INTERFACE zif_hr_bank_repository PUBLIC .
+
+  METHODS read_active_salary_snapshot
+    IMPORTING
+      !iv_pernr TYPE zcl_hr_bank_types=>ty_pernr
+    RETURNING
+      VALUE(rs_snapshot) TYPE zcl_hr_bank_types=>ty_bank_snapshot .
+
+  METHODS read_bank_codes
+    RETURNING
+      VALUE(rt_codes) TYPE zcl_hr_bank_types=>tt_bank_code .
+
+  METHODS read_pa0009_record
+    IMPORTING
+      !iv_pernr TYPE zcl_hr_bank_types=>ty_pernr
+      !iv_subty TYPE zcl_hr_bank_types=>ty_subty
+      !iv_begda TYPE zcl_hr_bank_types=>ty_begda
+      !iv_endda TYPE zcl_hr_bank_types=>ty_endda
+    RETURNING
+      VALUE(rs_record) TYPE p0009 .
+
+ENDINTERFACE.
+
+=== ZCL_HR_BANK_REPOSITORY.clas.abap ===
+*&---------------------------------------------------------------------*
+*& Class ZCL_HR_BANK_REPOSITORY
+*&---------------------------------------------------------------------*
+*& Encapsulates database reads for PA0009 and ZTHR0021 (no updates).
+*&---------------------------------------------------------------------*
+CLASS zcl_hr_bank_repository DEFINITION
+  PUBLIC
+  FINAL
+  CREATE PUBLIC .
+
+  PUBLIC SECTION.
+    INTERFACES zif_hr_bank_repository.
+
+    CLASS-METHODS factory
+      RETURNING
+        VALUE(ro_repo) TYPE REF TO zif_hr_bank_repository .
+
+ENDCLASS.
+
+
+CLASS zcl_hr_bank_repository IMPLEMENTATION.
+
+  METHOD factory.
+    CREATE OBJECT ro_repo TYPE zcl_hr_bank_repository.
+  ENDMETHOD.
+
+
+  METHOD zif_hr_bank_repository~read_active_salary_snapshot.
+
+    CLEAR rs_snapshot.
+
+    SELECT SINGLE FROM pa0009 AS pa
+      FIELDS pa~pernr,
+             pa~subty,
+             pa~begda,
+             pa~endda,
+             pa~bankl,
+             pa~bankn
+      WHERE pa~pernr = @iv_pernr
+        AND pa~infty = @zcl_hr_bank_types=>mc_infty
+        AND pa~subty = @zcl_hr_bank_types=>mc_subty_salary
+        AND pa~begda <= @sy-datum
+        AND pa~endda >= @sy-datum
+      INTO @DATA(ls_pa).
+
+    IF sy-subrc <> 0.
+      RETURN.
+    ENDIF.
+
+    rs_snapshot-has_record = abap_true.
+    rs_snapshot-pernr      = ls_pa-pernr.
+    rs_snapshot-subty      = ls_pa-subty.
+    rs_snapshot-begda      = ls_pa-begda.
+    rs_snapshot-endda      = ls_pa-endda.
+    rs_snapshot-bankl      = ls_pa-bankl.
+    rs_snapshot-bankn      = ls_pa-bankn.
+
+    SELECT SINGLE zthr0021~zcode_text1
+      FROM zthr0021
+      WHERE bukrs       = @zcl_hr_bank_types=>mc_bukrs
+        AND zcode_grup = @zcl_hr_bank_types=>mc_code_group
+        AND zcode      = @ls_pa-bankl
+        AND begda      <= @sy-datum
+        AND endda      >= @sy-datum
+      INTO @rs_snapshot-bank_name.
+
+  ENDMETHOD.
+
+
+  METHOD zif_hr_bank_repository~read_bank_codes.
+
+    SELECT FROM zthr0021
+      FIELDS zcode, zcode_text1
+      WHERE bukrs       = @zcl_hr_bank_types=>mc_bukrs
+        AND zcode_grup = @zcl_hr_bank_types=>mc_code_group
+        AND begda      <= @sy-datum
+        AND endda      >= @sy-datum
+      ORDER BY zcode_text1
+      INTO CORRESPONDING FIELDS OF TABLE @rt_codes.
+
+  ENDMETHOD.
+
+
+  METHOD zif_hr_bank_repository~read_pa0009_record.
+
+    DATA ls_db TYPE pa0009.
+
+    CLEAR rs_record.
+
+    SELECT SINGLE * FROM pa0009
+      WHERE pernr = @iv_pernr
+        AND infty = @zcl_hr_bank_types=>mc_infty
+        AND subty = @iv_subty
+        AND begda = @iv_begda
+        AND endda = @iv_endda
+      INTO CORRESPONDING FIELDS OF @ls_db.
+
+    IF sy-subrc <> 0.
+      RETURN.
+    ENDIF.
+
+    MOVE-CORRESPONDING ls_db TO rs_record.
+
+  ENDMETHOD.
+
+ENDCLASS.
+
+=== ZCL_HR_BANK_GATEWAY.clas.abap ===
+*&---------------------------------------------------------------------*
+*& Class ZCL_HR_BANK_GATEWAY
+*&---------------------------------------------------------------------*
+*& Clean-core HR boundary: all PA infotype writes via HR_INFOTYPE_OPERATION.
+*&---------------------------------------------------------------------*
+CLASS zcl_hr_bank_gateway DEFINITION
+  PUBLIC
+  FINAL
+  CREATE PUBLIC .
+
+  PUBLIC SECTION.
+
+    CLASS-METHODS modify_salary_bank
+      IMPORTING
+        !iv_pernr TYPE zcl_hr_bank_types=>ty_pernr
+        !iv_bankl TYPE bankk
+        !iv_bankn TYPE zcl_hr_bank_types=>ty_bankn
+      RAISING
+        zcx_hr_bank .
+
+    CLASS-METHODS delete_bank_record
+      IMPORTING
+        !iv_pernr TYPE zcl_hr_bank_types=>ty_pernr
+        !is_p0009 TYPE p0009
+      RAISING
+        zcx_hr_bank .
+
+  PRIVATE SECTION.
+
+    CLASS-METHODS call_hr_infotype_operation
+      IMPORTING
+        !iv_operation       TYPE pspar-operation
+        !iv_pernr           TYPE zcl_hr_bank_types=>ty_pernr
+        !iv_subty           TYPE zcl_hr_bank_types=>ty_subty
+        !iv_validity_begin  TYPE zcl_hr_bank_types=>ty_begda
+        !iv_validity_end    TYPE zcl_hr_bank_types=>ty_endda
+        !is_record          TYPE p0009
+      RAISING
+        zcx_hr_bank .
+
+ENDCLASS.
+
+
+CLASS zcl_hr_bank_gateway IMPLEMENTATION.
+
+  METHOD modify_salary_bank.
+
+    DATA ls_p0009 TYPE p0009.
+
+    ls_p0009-pernr = iv_pernr.
+    ls_p0009-infty = zcl_hr_bank_types=>mc_infty.
+    ls_p0009-subty = zcl_hr_bank_types=>mc_subty_salary.
+    ls_p0009-endda = zcl_hr_bank_types=>mc_endda_high.
+    ls_p0009-begda = sy-datum.
+    ls_p0009-banks = zcl_hr_bank_types=>mc_banks.
+    ls_p0009-bankl = iv_bankl.
+    ls_p0009-bankn = iv_bankn.
+
+    " Mirror customer-include fields on P0009 if present (activate when CI exists).
+    " ASSIGN COMPONENT 'ZBANKL' OF STRUCTURE ls_p0009 TO FIELD-SYMBOL(<zb>).
+    " IF sy-subrc = 0. <zb> = iv_bankl. ENDIF.
+
+    call_hr_infotype_operation(
+      iv_operation      = 'MOD'
+      iv_pernr          = iv_pernr
+      iv_subty          = zcl_hr_bank_types=>mc_subty_salary
+      iv_validity_begin = sy-datum
+      iv_validity_end   = zcl_hr_bank_types=>mc_endda_high
+      is_record         = ls_p0009 ).
+
+  ENDMETHOD.
+
+
+  METHOD delete_bank_record.
+
+    call_hr_infotype_operation(
+      iv_operation      = 'DEL'
+      iv_pernr          = iv_pernr
+      iv_subty          = is_p0009-subty
+      iv_validity_begin = is_p0009-begda
+      iv_validity_end   = is_p0009-endda
+      is_record         = is_p0009 ).
+
+  ENDMETHOD.
+
+
+  METHOD call_hr_infotype_operation.
+
+    DATA ls_return TYPE bapireturn1.
+
+    CALL FUNCTION 'HR_INFOTYPE_OPERATION'
+      EXPORTING
+        infty           = zcl_hr_bank_types=>mc_infty
+        number          = iv_pernr
+        subtype         = iv_subty
+        validitybegin   = iv_validity_begin
+        validityend     = iv_validity_end
+        record          = is_record
+        operation       = iv_operation
+      IMPORTING
+        return          = ls_return
+      EXCEPTIONS
+        OTHERS          = 1.
+
+    IF sy-subrc <> 0 OR ( ls_return-type IS NOT INITIAL AND ls_return-type CA 'EA' ).
+      RAISE EXCEPTION TYPE zcx_hr_bank
+        EXPORTING
+          iv_code = zcx_hr_bank=>gc_codes-hr_operation
+          iv_text = |HR_INFOTYPE_OPERATION failed ({ iv_operation })|.
+    ENDIF.
+
+  ENDMETHOD.
+
+ENDCLASS.
+
+=== ZCL_HR_BANK_CONTEXT.clas.abap ===
+*&---------------------------------------------------------------------*
+*& Class ZCL_HR_BANK_CONTEXT
+*&---------------------------------------------------------------------*
+*& Resolves dialog user → personnel number (customer-specific).
+*&---------------------------------------------------------------------*
+CLASS zcl_hr_bank_context DEFINITION
+  PUBLIC
+  FINAL
+  CREATE PUBLIC .
+
+  PUBLIC SECTION.
+
+    CLASS-METHODS get_personnel_number
+      IMPORTING
+        !iv_uname TYPE syuname DEFAULT sy-uname
+      RETURNING
+        VALUE(rv_pernr) TYPE zcl_hr_bank_types=>ty_pernr
+      RAISING
+        zcx_hr_bank .
+
+ENDCLASS.
+
+
+CLASS zcl_hr_bank_context IMPLEMENTATION.
+
+  METHOD get_personnel_number.
+
+    CLEAR rv_pernr.
+
+    " Primary: user parameter PER (SU01 / PA03 personnel default).
+    GET PARAMETER ID 'PER' FIELD rv_pernr.
+    IF rv_pernr IS NOT INITIAL.
+      RETURN.
+    ENDIF.
+
+    " Customer mapping example (uncomment & replace with your logic).
+    " SELECT SINGLE pernr FROM zthr_emp_user WHERE uname = @iv_uname INTO @rv_pernr.
+
+    IF rv_pernr IS INITIAL.
+      RAISE EXCEPTION TYPE zcx_hr_bank
+        EXPORTING
+          iv_code = zcx_hr_bank=>gc_codes-no_personnel
+          iv_text = |Personnel number not found for user { iv_uname }.|.
+    ENDIF.
+
+  ENDMETHOD.
+
+ENDCLASS.
+
+=== ZCL_HR_BANK_VALIDATOR.clas.abap ===
+*&---------------------------------------------------------------------*
+*& Class ZCL_HR_BANK_VALIDATOR
+*&---------------------------------------------------------------------*
+*& Domain validation before HR gateway calls.
+*&---------------------------------------------------------------------*
+CLASS zcl_hr_bank_validator DEFINITION
+  PUBLIC
+  FINAL
+  CREATE PUBLIC .
+
+  PUBLIC SECTION.
+
+    CLASS-METHODS validate_change_input
+      IMPORTING
+        !iv_bank_code TYPE zthr0021-zcode
+        !iv_bankn     TYPE bankn
+      RAISING
+        zcx_hr_bank .
+
+    CLASS-METHODS validate_delete_eligibility
+      IMPORTING
+        !iv_begda TYPE begda
+      RAISING
+        zcx_hr_bank .
+
+ENDCLASS.
+
+
+CLASS zcl_hr_bank_validator IMPLEMENTATION.
+
+  METHOD validate_change_input.
+
+    IF iv_bank_code IS INITIAL OR iv_bankn IS INITIAL.
+      RAISE EXCEPTION TYPE zcx_hr_bank
+        EXPORTING
+          iv_code = zcx_hr_bank=>gc_codes-validation_fail
+          iv_text = |Bank code and account number are required.|.
+    ENDIF.
+
+  ENDMETHOD.
+
+
+  METHOD validate_delete_eligibility.
+
+    IF iv_begda <> sy-datum.
+      RAISE EXCEPTION TYPE zcx_hr_bank
+        EXPORTING
+          iv_code = zcx_hr_bank=>gc_codes-validation_fail
+          iv_text = |Deletion only allowed when record start date equals system date.|.
+    ENDIF.
+
+  ENDMETHOD.
+
+ENDCLASS.
+
+=== ZCL_HR_BANK_SERVICE.clas.abap ===
+*&---------------------------------------------------------------------*
+*& Class ZCL_HR_BANK_SERVICE
+*&---------------------------------------------------------------------*
+*& Application service orchestrating validation, repository reads and HR gateway.
+*&---------------------------------------------------------------------*
+CLASS zcl_hr_bank_service DEFINITION
+  PUBLIC
+  FINAL
+  CREATE PUBLIC .
+
+  PUBLIC SECTION.
+
+    CLASS-METHODS change_salary_bank
+      IMPORTING
+        !iv_pernr     TYPE zcl_hr_bank_types=>ty_pernr
+        !iv_bank_code TYPE zthr0021-zcode
+        !iv_bankn     TYPE zcl_hr_bank_types=>ty_bankn
+      RAISING
+        zcx_hr_bank .
+
+    CLASS-METHODS delete_salary_bank
+      IMPORTING
+        !iv_pernr TYPE zcl_hr_bank_types=>ty_pernr
+        !is_snapshot TYPE zcl_hr_bank_types=>ty_bank_snapshot
+      RAISING
+        zcx_hr_bank .
+
+ENDCLASS.
+
+
+CLASS zcl_hr_bank_service IMPLEMENTATION.
+
+  METHOD change_salary_bank.
+
+    zcl_hr_bank_validator=>validate_change_input(
+      iv_bank_code = iv_bank_code
+      iv_bankn     = iv_bankn ).
+
+    zcl_hr_bank_gateway=>modify_salary_bank(
+      iv_pernr = iv_pernr
+      iv_bankl = CONV #( iv_bank_code )
+      iv_bankn = iv_bankn ).
+
+  ENDMETHOD.
+
+
+  METHOD delete_salary_bank.
+
+    zcl_hr_bank_validator=>validate_delete_eligibility( iv_begda = is_snapshot-begda ).
+
+    DATA(lo_repo) = zcl_hr_bank_repository=>factory( ).
+
+    DATA(ls_p0009) = lo_repo->read_pa0009_record(
+        iv_pernr = iv_pernr
+        iv_subty = is_snapshot-subty
+        iv_begda = is_snapshot-begda
+        iv_endda = is_snapshot-endda ).
+
+    IF ls_p0009-pernr IS INITIAL.
+      RAISE EXCEPTION TYPE zcx_hr_bank
+        EXPORTING
+          iv_code = zcx_hr_bank=>gc_codes-validation_fail
+          iv_text = |Bank row could not be read for deletion.|.
+    ENDIF.
+
+    zcl_hr_bank_gateway=>delete_bank_record(
+      iv_pernr = iv_pernr
+      is_p0009 = ls_p0009 ).
+
+  ENDMETHOD.
+
+ENDCLASS.
+
+=== ZCL_HR_BANK_UI.clas.abap ===
+*&---------------------------------------------------------------------*
+*& Class ZCL_HR_BANK_UI
+*&---------------------------------------------------------------------*
+*& Presentation controller: dynpro state, ALV, modal CALL SCREEN flows.
+*& Reads/writes report globals OK_CODE partners via parameters + TOP globals.
+*&---------------------------------------------------------------------*
+CLASS zcl_hr_bank_ui DEFINITION
+  PUBLIC
+  FINAL
+  CREATE PUBLIC .
+
+  PUBLIC SECTION.
+
+    CLASS-METHODS screen_0100_pbo .
+    CLASS-METHODS screen_0100_pai
+      IMPORTING
+        !iv_ucomm TYPE sy-ucomm
+      CHANGING
+        !cv_bankl TYPE zthr0021-zcode
+        !cv_bankn TYPE bankn .
+
+    CLASS-METHODS screen_0200_pbo .
+    CLASS-METHODS on_before_change_popup
+      CHANGING
+        !cv_bankl TYPE zthr0021-zcode
+        !cv_bankn TYPE bankn .
+
+    CLASS-METHODS screen_0200_pai
+      IMPORTING
+        !iv_ucomm     TYPE sy-ucomm
+        !iv_bank_code TYPE zthr0021-zcode
+        !iv_bankn     TYPE bankn .
+
+    CLASS-METHODS screen_0300_pbo .
+    CLASS-METHODS screen_0300_pai
+      IMPORTING
+        !iv_ucomm TYPE sy-ucomm .
+
+  PRIVATE SECTION.
+
+    CLASS-DATA ms_snapshot       TYPE zcl_hr_bank_types=>ty_bank_snapshot .
+    CLASS-DATA mt_alv            TYPE zcl_hr_bank_types=>tt_alv_grid .
+    CLASS-DATA mv_must_refresh   TYPE abap_bool VALUE abap_true .
+    CLASS-DATA mv_pernr          TYPE zcl_hr_bank_types=>ty_pernr .
+
+    CLASS-DATA mo_container      TYPE REF TO cl_gui_custom_container .
+    CLASS-DATA mo_grid           TYPE REF TO cl_gui_alv_grid .
+
+    CLASS-METHODS resolve_personnel RAISING zcx_hr_bank .
+    CLASS-METHODS reload_snapshot_from_db .
+    CLASS-METHODS rebuild_alv_buffer .
+    CLASS-METHODS ensure_alv_created .
+    CLASS-METHODS refresh_alv_display .
+    CLASS-METHODS build_fieldcatalog
+      CHANGING
+        !ct_fcat TYPE lvc_t_fcat .
+    CLASS-METHODS fill_bank_listbox_vrm .
+    CLASS-METHODS display_exception
+      IMPORTING
+        !ix TYPE REF TO zcx_hr_bank .
+
+ENDCLASS.
+
+
+CLASS zcl_hr_bank_ui IMPLEMENTATION.
+
+  METHOD screen_0100_pbo.
+
+    SET PF-STATUS 'ZHRF_MAIN'.
+    SET TITLEBAR 'ZHRF_MAIN'.
+
+    TRY.
+        resolve_personnel( ).
+      CATCH zcx_hr_bank INTO DATA(lx_ctx).
+        display_exception( lx_ctx ).
+        RETURN.
+    ENDTRY.
+
+    IF mv_must_refresh = abap_true.
+      reload_snapshot_from_db( ).
+      mv_must_refresh = abap_false.
+    ENDIF.
+
+    ensure_alv_created( ).
+    refresh_alv_display( ).
+
+  ENDMETHOD.
+
+
+  METHOD screen_0100_pai.
+
+    CASE iv_ucomm.
+      WHEN 'CHNG'.
+        on_before_change_popup(
+          CHANGING
+            cv_bankl = cv_bankl
+            cv_bankn = cv_bankn ).
+        CALL SCREEN 0200 STARTING AT 10 10 ENDING AT 70 22.
+
+      WHEN 'DEL'.
+        IF ms_snapshot-has_record = abap_false.
+          MESSAGE |There is no salary bank row to delete.| TYPE 'S' DISPLAY LIKE 'E'.
+          RETURN.
+        ENDIF.
+        CALL SCREEN 0300 STARTING AT 15 12 ENDING AT 65 18.
+
+      WHEN 'BACK' OR 'EXIT'.
+        LEAVE PROGRAM.
+
+      WHEN OTHERS.
+
+    ENDCASE.
+
+  ENDMETHOD.
+
+
+  METHOD screen_0200_pbo.
+
+    SET PF-STATUS 'ZHRF_POP_CH'.
+    SET TITLEBAR 'ZHRF_POP_CH'.
+
+    fill_bank_listbox_vrm( ).
+
+  ENDMETHOD.
+
+
+  METHOD screen_0200_pai.
+
+    CASE iv_ucomm.
+      WHEN 'SAVE'.
+
+        TRY.
+            zcl_hr_bank_service=>change_salary_bank(
+              iv_pernr     = mv_pernr
+              iv_bank_code = iv_bank_code
+              iv_bankn     = iv_bankn ).
+
+            mv_must_refresh = abap_true.
+            LEAVE TO SCREEN 0.
+
+          CATCH zcx_hr_bank INTO DATA(lx_save).
+            display_exception( lx_save ).
+        ENDTRY.
+
+      WHEN 'CANC'.
+        LEAVE TO SCREEN 0.
+
+      WHEN OTHERS.
+
+    ENDCASE.
+
+  ENDMETHOD.
+
+
+  METHOD screen_0300_pbo.
+
+    SET PF-STATUS 'ZHRF_POP_DL'.
+    SET TITLEBAR 'ZHRF_POP_DL'.
+
+  ENDMETHOD.
+
+
+  METHOD screen_0300_pai.
+
+    CASE iv_ucomm.
+      WHEN 'YES'.
+
+        TRY.
+            zcl_hr_bank_service=>delete_salary_bank(
+              iv_pernr     = mv_pernr
+              is_snapshot = ms_snapshot ).
+
+            mv_must_refresh = abap_true.
+            LEAVE TO SCREEN 0.
+
+          CATCH zcx_hr_bank INTO DATA(lx_del).
+            display_exception( lx_del ).
+        ENDTRY.
+
+      WHEN 'CANC'.
+        LEAVE TO SCREEN 0.
+
+      WHEN OTHERS.
+
+    ENDCASE.
+
+  ENDMETHOD.
+
+
+  METHOD resolve_personnel.
+
+    mv_pernr = zcl_hr_bank_context=>get_personnel_number( ).
+
+  ENDMETHOD.
+
+
+  METHOD reload_snapshot_from_db.
+
+    DATA(lo_repo) = zcl_hr_bank_repository=>factory( ).
+
+    ms_snapshot = lo_repo->read_active_salary_snapshot( mv_pernr ).
+    rebuild_alv_buffer( ).
+
+  ENDMETHOD.
+
+
+  METHOD rebuild_alv_buffer.
+
+    CLEAR mt_alv.
+
+    IF ms_snapshot-has_record = abap_true.
+      APPEND VALUE #(
+        bank_name = ms_snapshot-bank_name
+        bankn     = ms_snapshot-bankn ) TO mt_alv.
+    ELSE.
+      APPEND VALUE #(
+        bank_name = space
+        bankn     = space ) TO mt_alv.
+    ENDIF.
+
+  ENDMETHOD.
+
+
+  METHOD ensure_alv_created.
+
+    IF mo_container IS NOT INITIAL.
+      RETURN.
+    ENDIF.
+
+    CREATE OBJECT mo_container
+      EXPORTING
+        container_name = 'CC_MAIN'.
+
+    CREATE OBJECT mo_grid
+      EXPORTING
+        i_parent = mo_container.
+
+    DATA lt_fcat TYPE lvc_t_fcat.
+    build_fieldcatalog( CHANGING ct_fcat = lt_fcat ).
+
+    CALL METHOD mo_grid->set_table_for_first_display
+      EXPORTING
+        i_buffer_active               = abap_false
+      CHANGING
+        it_outtab                     = mt_alv
+        it_fieldcatalog               = lt_fcat.
+
+  ENDMETHOD.
+
+
+  METHOD refresh_alv_display.
+
+    CHECK mo_grid IS NOT INITIAL.
+
+    DATA ls_stable TYPE lvc_s_stbl.
+    ls_stable-row = abap_true.
+    ls_stable-col = abap_true.
+
+    mo_grid->refresh_table_display(
+      EXPORTING
+        is_stable = ls_stable ).
+
+  ENDMETHOD.
+
+
+  METHOD build_fieldcatalog.
+
+    DATA ls_fcat TYPE lvc_s_fcat.
+
+    CLEAR ls_fcat.
+    ls_fcat-fieldname = 'BANK_NAME'.
+    ls_fcat-coltext   = 'Bank'.
+    ls_fcat-outputlen = 40.
+    APPEND ls_fcat TO ct_fcat.
+
+    CLEAR ls_fcat.
+    ls_fcat-fieldname = 'BANKN'.
+    ls_fcat-coltext   = 'Account number'.
+    ls_fcat-outputlen = 30.
+    APPEND ls_fcat TO ct_fcat.
+
+  ENDMETHOD.
+
+
+  METHOD fill_bank_listbox_vrm.
+
+    DATA(lo_repo) = zcl_hr_bank_repository=>factory( ).
+    DATA(lt_codes) = lo_repo->read_bank_codes( ).
+
+    DATA lt_values TYPE vrm_values.
+    CLEAR lt_values.
+
+    LOOP AT lt_codes INTO DATA(ls).
+      APPEND VALUE #(
+        key = ls-zcode
+        text = ls-zcode_text1 ) TO lt_values.
+    ENDLOOP.
+
+    CALL FUNCTION 'VRM_SET_VALUES'
+      EXPORTING
+        id     = 'GV_CH_BANKL'
+        values = lt_values.
+
+  ENDMETHOD.
+
+
+  METHOD on_before_change_popup.
+
+    cv_bankl = CONV #( ms_snapshot-bankl ).
+    cv_bankn = ms_snapshot-bankn.
+
+  ENDMETHOD.
+
+
+  METHOD display_exception.
+
+    MESSAGE ix->mv_text TYPE 'E'.
+
+  ENDMETHOD.
+
+ENDCLASS.
