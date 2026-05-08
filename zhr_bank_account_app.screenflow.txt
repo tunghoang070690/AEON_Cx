@@ -1,0 +1,77 @@
+================================================================================
+ZHR_BANK_ACCOUNT_APP — Dynpro flow logic (create screens in SE51 / SE80)
+Program name must match: ZHR_BANK_ACCOUNT_APP
+================================================================================
+
+GUI statuses (SE41, status type "Normal screen", same program name):
+  ZHR_BNK_MAIN  — screen 0100 (Back, Exit; optional Save not used on list)
+  ZHR_BNK_0200  — screen 0200 (SAVE, CLOSE)
+  ZHR_BNK_0300  — screen 0300 (CONFIRM, CANCEL)
+
+Title bars (SE51 title objects, same program):
+  ZHR_BNK_T0100  Main list
+  ZHR_BNK_T0200  Change account
+  ZHR_BNK_T0300  Delete confirmation
+
+Screen elements (names must match ABAP globals in zhr_bank_account_app.abap):
+  OK_CODE       Type OK Code Field (name: OK_CODE)
+
+--------------------------------------------------------------------------------
+SCREEN 0100 — Normal, next dynpro 0
+--------------------------------------------------------------------------------
+Layout:
+  Custom container area with header text "계좌 내역" (text field).
+  Table control TC_ACCOUNT (table type, multiple rows).
+    Row fields: GV_BANK_TEXT (output), GV_BANKN (output)
+    Row pushbuttons: BTN_CHANGE (FCODE ZCHG), BTN_DELETE (FCODE ZDEL)
+
+PROCESS BEFORE OUTPUT.
+  MODULE status_0100.
+  MODULE load_account_list.
+  LOOP AT gt_account INTO gs_account WITH CONTROL tc_account
+       CURSOR tc_account-current_line.
+    MODULE fill_account_row.
+  ENDLOOP.
+
+PROCESS AFTER INPUT.
+  MODULE user_command_0100.
+
+--------------------------------------------------------------------------------
+SCREEN 0200 — Modal dialog box, next dynpro 0, size approx 70 x 15
+--------------------------------------------------------------------------------
+Fields:
+  GV_ACCOUNT_TYPE  (output or input; default display "급여")
+  GV_BANK_CODE     (input, dropdown listbox = X)
+  GV_BANKN         (input, like PA0009-BANKN)
+
+Pushbuttons / FCODES:
+  SAVE   (FCODE SAVE)
+  CLOSE  (FCODE CLOSE)
+
+PROCESS BEFORE OUTPUT.
+  MODULE status_0200.
+  MODULE fill_bank_listbox.
+
+PROCESS AFTER INPUT.
+  MODULE user_command_0200.
+
+--------------------------------------------------------------------------------
+SCREEN 0300 — Modal dialog box, next dynpro 0
+--------------------------------------------------------------------------------
+Static text: 계좌를 삭제하시겠습니까?
+
+Pushbuttons:
+  CONFIRM  (FCODE CONF)
+  CANCEL   (FCODE CANC)
+
+PROCESS BEFORE OUTPUT.
+  MODULE status_0300.
+
+PROCESS AFTER INPUT.
+  MODULE user_command_0300.
+
+================================================================================
+Table control TC_ACCOUNT (SE51): bind to program structure fields used in LOOP
+(loop work area: GS_ACCOUNT; screen row fields map to GV_BANK_TEXT, GV_BANKN,
+ BTN_CHANGE, BTN_DELETE as defined in layout).
+================================================================================
