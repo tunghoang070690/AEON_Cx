@@ -144,9 +144,15 @@ CLASS lcl_repository IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD build_bank_text_map.
-    FIELD-SYMBOLS <l> LIKE LINE OF it_lines.
+    DATA lt_tmp TYPE ty_t_zthr_line.
+    FIELD-SYMBOLS <l> LIKE LINE OF lt_tmp.
+
+    lt_tmp = it_lines.
+    SORT lt_tmp BY zcode.
+    DELETE ADJACENT DUPLICATES FROM lt_tmp COMPARING zcode.
+
     CLEAR rt_map.
-    LOOP AT it_lines ASSIGNING <l>.
+    LOOP AT lt_tmp ASSIGNING <l>.
       INSERT VALUE #( bankl = <l>-zcode text = <l>-zcode_text1 ) INTO TABLE rt_map.
     ENDLOOP.
   ENDMETHOD.
