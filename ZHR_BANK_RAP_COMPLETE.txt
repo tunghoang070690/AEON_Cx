@@ -1,0 +1,700 @@
+================================================================================
+ZHR BANK ACCOUNT (PA0009 / IT0009) — RAP + OData V4 + Fiori Elements Preview
+Copy-paste package: architecture, investigation, testing steps, full sources
+================================================================================
+Customer constraints: no BAS / no freestyle UI5 — UI only via FE Preview on OData V4.
+
+--------------------------------------------------------------------------------
+1) ARCHITECTURE RECOMMENDATION (ENTERPRISE / CLEAN CORE)
+--------------------------------------------------------------------------------
+- UI: Fiori Elements (List Report) on OData V4 service binding (type: UI).
+- Domain: HR Infotype 0009 (bank / salary account) for current user’s PERNR.
+- Data access: CDS read model (join PA0009 ↔ ZTHR0021) for list + texts.
+- Mutations: OData V4 instance ACTIONS (Change / Delete), not generic UPDATE/DELETE
+  on the entity, so Fiori Elements Preview can show action buttons and dialogs
+  without custom UI5.
+- Service layer: dedicated repository + HR gateway classes wrapping SAP HR APIs.
+- Configuration: transparent table ZT_HRBNK_APPPAR (single row per client) holds
+  BUKRS and ZCODE_GRUP — no literals in code paths that must vary by customer.
+
+Why not “managed RAP on PA0009”?
+- Managed persistence would let the RAP runtime issue direct INSERT/UPDATE/DELETE
+  on PA0009. HR master data is governed by the HR infotype framework (validity,
+  authorization, consistency checks, customer exits, buffer logic). Direct SQL
+  table maintenance bypasses that stack and is not an acceptable clean-core
+  pattern for infotypes.
+
+Chosen pattern:
+- RAP root with UNMANAGED implementation: custom READ + ACTION implementations.
+- HR changes exclusively via HR_INFOTYPE_OPERATION (same as your SAP GUI app),
+  with nocommit = abap_true and an explicit COMMIT WORK AND WAIT after successful
+  processing for the OData request LUW (mirrors your COMMIT after save).
+
+Optional long-term evolution:
+- If SAP exposes a first-class released API for IT0009 maintenance in your
+  release (for example a released BAPI family consistent with your HR support
+  package), route ZCL_HRBNK_HR_GATEWAY to that API instead — keep the RAP surface
+  unchanged.
+
+--------------------------------------------------------------------------------
+2) RAP SCENARIO RECOMMENDATION
+--------------------------------------------------------------------------------
+Primary recommendation: UNMANAGED RAP (read + actions).
+- Alternative “managed with unmanaged save” is for cases where managed buffer
+  still maps to your own tables; here the physical table is standard HR and the
+  save API is HR — unmanaged actions + explicit service layer is clearer and
+  safer.
+
+--------------------------------------------------------------------------------
+3) TECHNICAL INVESTIGATION RESULTS (DESKTOP RESEARCH — VERIFY IN YOUR SYSTEM)
+--------------------------------------------------------------------------------
+3.1 Direct managed/unmanaged UPDATE on PA0009
+- Technically possible in ABAP, but NOT recommended for HR infotypes because it
+  skips HR infotype APIs and can corrupt validity chains and business rules.
+
+3.2 “Standard RAP entity” for HR infotypes
+- SAP does not publish PA0009 as a generic managed RAP business object for
+  customer maintenance in the sense of “turn on managed persistence and go”.
+  Pragmatic integration path is API/FM-based save behind RAP.
+
+3.3 HR_INFOTYPE_OPERATION vs HR_MAINTAIN_MASTERDATA / BAPI
+- HR_INFOTYPE_OPERATION remains widely used in customer and SAP code for
+  infotype maintenance; SAP documents behavior via KBAs (example family:
+  KBA 2093195 — FM-specific quirks). It is not automatically “obsolete” solely
+  because RAP exists; your team should confirm support status against your
+  installed HR component version in SAP Notes / component matrix.
+- HR_MAINTAIN_MASTERDATA and various BAPIs exist for broader HR processes; for
+  IT0009 specifically, continuing with HR_INFOTYPE_OPERATION is consistent with
+  your proven SAP GUI implementation, provided you harden PERNR resolution and
+  authorization.
+
+3.4 Calling HR_INFOTYPE_OPERATION from RAP behavior
+- Supported pattern: call from MODIFY (action) implementation on application
+  server; use nocommit + explicit COMMIT WORK AND WAIT after successful calls for
+  the business transaction, or align with your HR team’s LUW policy.
+- Do not call RFC-enabled variants unless you intentionally cross a boundary;
+  same-system RAP should call the FM directly.
+
+3.5 Transaction consistency / LUW in RAP
+- OData V4 inbound request runs in one ABAP LUW; your action implementation
+  should avoid partial commits. Recommended: process one instance action per
+  request for clarity; on first hard error populate failed + reported and ROLLBACK.
+- After successful HR_INFOTYPE_OPERATION with nocommit = abap_true, issue
+  COMMIT WORK AND WAIT once per successful operation batch (see implementation).
+
+3.6 Conclusion
+- DO NOT use managed persistence on PA0009 for this use case.
+- DO wrap HR_INFOTYPE_OPERATION (or a future released successor) behind a small
+  gateway class callable from RAP actions.
+
+--------------------------------------------------------------------------------
+4–11) CONSOLIDATED DESIGN (CDS / BEHAVIOR / SERVICE / VH / ACTIONS / AUTH / MSGS)
+--------------------------------------------------------------------------------
+CDS:
+- ZT_HRBNK_APPPAR (transparent) — config (BUKRS, ZCODE_GRUP).
+- ZI_HRBNK_BANKACC — root view entity: PA0009 + join ZTHR0021 + join ZT_HRBNK_APPPAR
+  for validity + company/group scoping.
+- ZI_HRBNK_BANK_VH — value help view on ZTHR0021 filtered by config row + dates.
+- ZC_HRBNK_BANKACC — consumption projection (service-facing).
+- Metadata extension on ZC_HRBNK_BANKACC — UI.LineItem, UI.SelectionField, Search,
+  field groups, critical delete action.
+
+Behavior:
+- ZI_HRBNK_BANKACC behavior definition — unmanaged, read + two instance actions.
+- ZCL_HRBNK_BANKACC_BH — handler: READ filters by PERNR from PA0105 for sy-uname;
+  actions call gateway; map messages to failed/reported.
+
+Service:
+- ZUI_HRBNK_BANKACC — exposes ZC_HRBNK_BANKACC.
+- OData V4 UI service binding ZUI_HRBNK_BANKACC_O2 (name example) — created in ADT.
+
+Actions:
+- changeBankAccount( bankl, bankn ) — wraps MOD on current validity row.
+- deleteBankAccount — wraps DEL on current salary account row (SUBTY = 0).
+
+Authorization:
+- AUTHORITY-CHECK on 'P_ORGIN' (or your standard HR auth object / infotype 0009
+  profile) inside READ and MODIFY paths — adjust ACTIVITY and fields to match
+  your security design.
+
+Messages:
+- Message class ZHR_BANK_ACC (create in SE91 / ADT), or map BAPIRETURN1 into
+  reported entries using if_abap_behv_message~create.
+
+--------------------------------------------------------------------------------
+12) OBJECT CREATION SEQUENCE (ADT)
+--------------------------------------------------------------------------------
+1. ABAP package (example ZHR_BANK_ACC).
+2. Table ZT_HRBNK_APPPAR (see DDL section) + maintain one row.
+3. Message class ZHR_BANK_ACC (optional but recommended).
+4. CDS ZI_HRBNK_BANKACC, ZI_HRBNK_BANK_VH, ZC_HRBNK_BANKACC.
+5. Metadata extension CDS for ZC_HRBNK_BANKACC.
+6. Behavior definition ZI_HRBNK_BANKACC + implementation class ZCL_HRBNK_BANKACC_BH.
+7. Service definition ZUI_HRBNK_BANKACC + OData V4 UI service binding.
+8. Activate all; publish binding; test in Preview.
+
+--------------------------------------------------------------------------------
+13–20) IMPLEMENTATION NOTES + PREVIEW TEST STEPS (SHORT)
+--------------------------------------------------------------------------------
+- Publish local service endpoint for OData V4 UI binding.
+- Open “Fiori preview” from the service binding; verify list, filters, VH, actions.
+- Change action: dialog fields bankl/bankn; save; list refreshes (re-run GET).
+- Delete action: confirm (browser / FE confirmation if annotated critical).
+
+================================================================================
+DDIC — CONFIG TABLE (create via ADT Data Definition or SE11)
+================================================================================
+Table name: ZT_HRBNK_APPPAR
+Delivery class: C (customer)
+Table maintenance: allow via SM30 if desired
+
+Fields (example):
+- MANDT      CLNT  NOT NULL key
+- BUKRS      BUKRS NOT NULL key
+- ZCODE_GRUP ZTHR0021-ZCODE_GRUP NOT NULL
+- BANKS      BANKS OPTIONAL (recommended: move country bank key out of hardcoded constants)
+
+Maintain exactly one row per MANDT for the join pattern used in the CDS below. If you
+need multiple company codes per client, change the key design and adjust the CDS join.
+
+================================================================================
+CDS — ZI_HRBNK_BANKACC (root view entity)
+================================================================================
+@AccessControl.authorizationCheck: #CHECK
+@EndUserText.label: 'HR Bank Account (IT0009) read model'
+@Metadata.allowExtensions: true
+define root view entity ZI_HRBNK_BANKACC
+  as select from    pa0009                 as P9
+    inner join      zt_hrbnk_apppar       as Cfg on  Cfg.mandt = $session.client
+    left outer join zthr0021               as Bnk
+      on  Bnk.mandt       = P9.mandt
+      and Bnk.zcode       = P9.bankl
+      and Bnk.bukrs       = Cfg.bukrs
+      and Bnk.zcode_grup  = Cfg.zcode_grup
+      and Bnk.begda       <= $session.system_date
+      and Bnk.endda       >= $session.system_date
+{
+      key P9.pernr,
+      key P9.subty,
+      key P9.objps,
+      key P9.sprps,
+      key P9.endda,
+      key P9.begda,
+      P9.bankl,
+      P9.bankn,
+      P9.banks,
+      Bnk.zcode_text1 as BankName
+}
+where
+      P9.subty = '0'
+  and P9.begda <= $session.system_date
+  and P9.endda >= $session.system_date
+
+================================================================================
+CDS — VALUE HELP ZI_HRBNK_BANK_VH
+================================================================================
+@AccessControl.authorizationCheck: #CHECK
+@EndUserText.label: 'Bank key value help (ZTHR0021)'
+define view entity ZI_HRBNK_BANK_VH
+  as select from    zthr0021         as Bnk
+    inner join      zt_hrbnk_apppar  as Cfg on Cfg.mandt = $session.client
+{
+  key Bnk.mandt,
+  key Bnk.bukrs,
+  key Bnk.zcode_grup,
+  key Bnk.zcode,
+  key Bnk.begda,
+  key Bnk.endda,
+      Bnk.zcode_text1
+}
+where
+      Bnk.bukrs      = Cfg.bukrs
+  and Bnk.zcode_grup = Cfg.zcode_grup
+  and Bnk.begda      <= $session.system_date
+  and Bnk.endda      >= $session.system_date
+
+================================================================================
+CDS — CONSUMPTION PROJECTION ZC_HRBNK_BANKACC
+================================================================================
+@AccessControl.authorizationCheck: #CHECK
+@EndUserText.label: 'HR Bank Account (UI projection)'
+@Metadata.layer: #CORE
+@Search.searchable: true
+define root view entity ZC_HRBNK_BANKACC
+  provider contract transactional_query
+  as projection on ZI_HRBNK_BANKACC
+{
+      key pernr,
+      key subty,
+      key objps,
+      key sprps,
+      key endda,
+      key begda,
+      bankl,
+      bankn,
+      banks,
+      BankName
+}
+
+================================================================================
+CDS — METADATA EXTENSION (Fiori Elements List Report + actions)
+================================================================================
+/* Put this in a separate metadata extension object, e.g. ZC_HRBNK_BANKACC_M */
+
+annotate view ZC_HRBNK_BANKACC with
+{
+  @UI.headerInfo: {
+    typeName: 'Bank Account',
+    typeNamePlural: 'Bank Accounts',
+    title: { type: #STANDARD, value: 'BankName' }
+  }
+
+  @UI.selectionField: [{ position: 10 }]
+  @Consumption.valueHelpDefinition: [{
+    entity: { name: 'ZI_HRBNK_BANK_VH', element: 'zcode' },
+    additionalBinding: [{ localElement: 'bankl', element: 'zcode' }]
+  }]
+  bankl;
+
+  @UI.selectionField: [{ position: 20 }]
+  bankn;
+
+  @UI.lineItem: [
+    { position: 10, importance: #HIGH, label: 'Bank Name', value: 'BankName' },
+    { position: 20, importance: #HIGH, label: 'Account Number', value: 'bankn' },
+    { position: 90, importance: #HIGH, type: #FOR_ACTION, label: 'Change', action: 'changeBankAccount', invocationGrouping: #ISOLATED },
+    { position: 100, importance: #HIGH, type: #FOR_ACTION, label: 'Delete', action: 'deleteBankAccount', invocationGrouping: #ISOLATED, criticality: #High }
+  ]
+  pernr;
+
+  @Search.defaultSearchElement: true
+  BankName;
+
+  @Search.defaultSearchElement: true
+  bankn;
+};
+
+/* NOTE:
+   - Some UI5 versions expect #FOR_ACTION line items on a visible field; `pernr` is used here as a stable anchor.
+   - If your ADT quick-fix proposes a different annotation variant, follow the quick-fix (preview compatibility is version-sensitive).
+   - Delete confirmation in pure annotations is limited; criticality #High nudges Fiori Elements to treat the action as critical. */
+
+================================================================================
+BEHAVIOR DEFINITION — ZI_HRBNK_BANKACC (save file as ZI_HRBNK_BANKACC.bdef)
+================================================================================
+unmanaged implementation in class zcl_hrbnk_bankacc_bh unique;
+strict ( 2 );
+
+define behavior for ZI_HRBNK_BANKACC alias BankAccount
+{
+  read;
+
+  action changeBankAccount parameters {
+    bankl type bankl;
+    bankn type bankn;
+  }
+  result [1] $self;
+
+  action deleteBankAccount
+  result [1] $self;
+}
+
+================================================================================
+BEHAVIOR PROJECTION — ZC_HRBNK_BANKACC (ZC_HRBNK_BANKACC.bdef; optional if you expose ZC directly)
+================================================================================
+projection;
+strict ( 2 );
+
+define behavior for ZC_HRBNK_BANKACC alias BankAccount
+{
+  use read;
+  use action changeBankAccount;
+  use action deleteBankAccount;
+}
+
+================================================================================
+SERVICE DEFINITION — ZUI_HRBNK_BANKACC.srvd
+================================================================================
+@EndUserText.label: 'HR Bank Account OData API'
+define service ZUI_HRBNK_BANKACC {
+  expose ZC_HRBNK_BANKACC as BankAccount;
+}
+
+================================================================================
+ABAP — ZCL_HRBNK_CONFIG (optional if you refuse DDIC config table reads outside CDS)
+================================================================================
+*"* USE THIS READ CLASS ONLY IF YOU NEED ABAP-SIDE CONFIG WITHOUT CDS JOIN
+CLASS zcl_hrbnk_config DEFINITION PUBLIC FINAL CREATE PUBLIC .
+  PUBLIC SECTION.
+    CLASS-METHODS read_single
+      EXPORTING
+        es_cfg TYPE zt_hrbnk_apppar .
+ENDCLASS.
+
+CLASS zcl_hrbnk_config IMPLEMENTATION.
+  METHOD read_single.
+    SELECT SINGLE *
+      FROM zt_hrbnk_apppar
+      INTO @es_cfg
+      WHERE mandt = @sy-mandt.
+  ENDMETHOD.
+ENDCLASS.
+
+================================================================================
+ABAP — ZCL_HRBNK_PERNR (resolve PERNR for current user)
+================================================================================
+CLASS zcl_hrbnk_pernr DEFINITION PUBLIC FINAL CREATE PUBLIC .
+  PUBLIC SECTION.
+    CLASS-METHODS get_pernr_for_user
+      IMPORTING
+        iv_uname        TYPE syuname DEFAULT sy-uname
+      RETURNING
+        VALUE(rv_pernr) TYPE pernr_d .
+ENDCLASS.
+
+CLASS zcl_hrbnk_pernr IMPLEMENTATION.
+  METHOD get_pernr_for_user.
+    CLEAR rv_pernr.
+
+    " Communication subtype '0001' is used in your SAP GUI prototype; adjust if your
+    " HR master data model maps users differently (USRID vs USRID_LONG, validity).
+    SELECT SINGLE pernr
+      FROM pa0105
+      INTO @rv_pernr
+      WHERE subty    = '0001'
+        AND usrid    = @iv_uname
+        AND begda    <= @sy-datum
+        AND endda    >= @sy-datum.
+  ENDMETHOD.
+ENDCLASS.
+
+================================================================================
+ABAP — INTERFACE ZIF_HRBNK_BANK_KEY (create before the gateway class)
+================================================================================
+INTERFACE zif_hrbnk_bank_key PUBLIC .
+  TYPES:
+    BEGIN OF ty_key,
+      pernr TYPE pernr_d,
+      subty TYPE subty,
+      objps TYPE objps,
+      sprps TYPE sprps,
+      endda TYPE endda,
+      begda TYPE begda,
+    END OF ty_key .
+ENDINTERFACE.
+
+================================================================================
+ABAP — ZCL_HRBNK_HR_GATEWAY (HR_INFOTYPE_OPERATION wrapper; no direct SQL on PA0009)
+================================================================================
+CLASS zcl_hrbnk_hr_gateway DEFINITION PUBLIC FINAL CREATE PUBLIC .
+  PUBLIC SECTION.
+    CONSTANTS mc_infty TYPE infty VALUE '0009'.
+
+    CLASS-METHODS read_banks_from_config
+      EXPORTING
+        es_banks TYPE banks .
+
+    CLASS-METHODS modify_current_record
+      IMPORTING
+        is_key   TYPE zif_hrbnk_bank_key=>ty_key
+        iv_bankl TYPE bankl
+        iv_bankn TYPE bankn
+      EXPORTING
+        es_return  TYPE bapireturn1
+        ev_success TYPE abap_bool .
+
+    CLASS-METHODS delete_current_record
+      IMPORTING
+        is_key TYPE zif_hrbnk_bank_key=>ty_key
+      EXPORTING
+        es_return  TYPE bapireturn1
+        ev_success TYPE abap_bool .
+ENDCLASS.
+
+CLASS zcl_hrbnk_hr_gateway IMPLEMENTATION.
+
+  METHOD read_banks_from_config.
+    SELECT SINGLE banks
+      FROM zt_hrbnk_apppar
+      INTO @es_banks
+      WHERE mandt = @sy-mandt.
+    IF sy-subrc <> 0 OR es_banks IS INITIAL.
+      es_banks = 'KR'.
+    ENDIF.
+  ENDMETHOD.
+
+  METHOD modify_current_record.
+    CLEAR: es_return, ev_success.
+
+    DATA(ls_p0009) TYPE p0009.
+    read_banks_from_config( IMPORTING es_banks = ls_p0009-banks ).
+
+    ls_p0009-pernr = is_key-pernr.
+    ls_p0009-infty = mc_infty.
+    ls_p0009-subty = is_key-subty.
+    ls_p0009-begda = is_key-begda.
+    ls_p0009-endda = is_key-endda.
+    ls_p0009-bankl = iv_bankl.
+    ls_p0009-bankn = iv_bankn.
+
+    CALL FUNCTION 'HR_INFOTYPE_OPERATION'
+      EXPORTING
+        infty         = mc_infty
+        number        = is_key-pernr
+        subtype       = is_key-subty
+        record        = ls_p0009
+        operation     = 'MOD'
+        nocommit      = abap_true
+      IMPORTING
+        return        = es_return
+      EXCEPTIONS
+        invalid_date  = 1
+        error_message = 2
+        OTHERS        = 3.
+
+    IF sy-subrc = 0 AND es_return-type NA 'EA'.
+      ev_success = abap_true.
+    ELSE.
+      ev_success = abap_false.
+    ENDIF.
+  ENDMETHOD.
+
+  METHOD delete_current_record.
+    CLEAR: es_return, ev_success.
+
+    DATA(ls_p0009) TYPE p0009.
+    ls_p0009-pernr = is_key-pernr.
+    ls_p0009-infty = mc_infty.
+    ls_p0009-subty = is_key-subty.
+    ls_p0009-begda = is_key-begda.
+
+    CALL FUNCTION 'HR_INFOTYPE_OPERATION'
+      EXPORTING
+        infty         = mc_infty
+        number        = is_key-pernr
+        subtype       = is_key-subty
+        record        = ls_p0009
+        operation     = 'DEL'
+        nocommit      = abap_true
+      IMPORTING
+        return        = es_return
+      EXCEPTIONS
+        invalid_date  = 1
+        error_message = 2
+        OTHERS        = 3.
+
+    IF sy-subrc = 0 AND es_return-type NA 'EA'.
+      ev_success = abap_true.
+    ELSE.
+      ev_success = abap_false.
+    ENDIF.
+  ENDMETHOD.
+
+ENDCLASS.
+
+================================================================================
+ABAP — ZCL_HRBNK_BANKACC_BH (RAP behavior implementation)
+================================================================================
+*"* IMPORTANT:
+*"* Create/activate the behavior definition first, then use ADT:
+*"*   Behavior Definition (ZI_HRBNK_BANKACC) -> "Implement Behavior Class"
+*"* ADT generates exact method signatures (READ / ACTION) and FAILED/REPORTED types.
+*"* Align method names and FAILED/REPORTED table types with the generated interface.
+
+CLASS zcl_hrbnk_bankacc_bh DEFINITION PUBLIC FINAL CREATE PUBLIC .
+  PUBLIC SECTION.
+    INTERFACES if_abap_behavior_handler .
+  PRIVATE SECTION.
+
+    METHODS read FOR READ
+      IMPORTING keys FOR READ bankaccount RESULT result.
+
+    METHODS changeBankAccount FOR MODIFY
+      IMPORTING keys FOR ACTION BankAccount~changeBankAccount RESULT result
+      FAILED   failed
+      REPORTED reported.
+
+    METHODS deleteBankAccount FOR MODIFY
+      IMPORTING keys FOR ACTION BankAccount~deleteBankAccount RESULT result
+      FAILED   failed
+      REPORTED reported.
+
+    METHODS map_bapireturn_to_string
+      IMPORTING
+        is_return      TYPE bapireturn1
+      RETURNING
+        VALUE(rv_text) TYPE string .
+ENDCLASS.
+
+CLASS zcl_hrbnk_bankacc_bh IMPLEMENTATION.
+
+  METHOD map_bapireturn_to_string.
+    MESSAGE ID is_return-id TYPE 'S' NUMBER is_return-number
+      WITH is_return-message_v1 is_return-message_v2 is_return-message_v3 is_return-message_v4
+      INTO rv_text.
+  ENDMETHOD.
+
+  METHOD read.
+    DATA(lv_pernr) = zcl_hrbnk_pernr=>get_pernr_for_user( ).
+    IF lv_pernr IS INITIAL.
+      CLEAR result.
+      RETURN.
+    ENDIF.
+
+    IF keys IS INITIAL.
+      SELECT FROM zi_hrbnk_bankacc
+        FIELDS *
+        WHERE pernr = @lv_pernr
+        INTO CORRESPONDING FIELDS OF TABLE @result.
+    ELSE.
+      SELECT FROM zi_hrbnk_bankacc
+        FIELDS *
+        FOR ALL ENTRIES IN @keys
+        WHERE pernr = @keys-pernr
+          AND subty = @keys-subty
+          AND objps = @keys-objps
+          AND sprps = @keys-sprps
+          AND endda = @keys-endda
+          AND begda = @keys-begda
+        INTO CORRESPONDING FIELDS OF TABLE @result.
+
+      DELETE result WHERE pernr <> lv_pernr.
+    ENDIF.
+  ENDMETHOD.
+
+  METHOD changeBankAccount.
+    DATA(lv_pernr) = zcl_hrbnk_pernr=>get_pernr_for_user( ).
+    IF lv_pernr IS INITIAL.
+      LOOP AT keys ASSIGNING FIELD-SYMBOL(<k0>).
+        INSERT VALUE #( %tky = <k0>-%tky ) INTO TABLE failed.
+      ENDLOOP.
+      RETURN.
+    ENDIF.
+
+    LOOP AT keys ASSIGNING FIELD-SYMBOL(<k>).
+      IF <k>-pernr <> lv_pernr.
+        INSERT VALUE #( %tky = <k>-%tky ) INTO TABLE failed.
+        CONTINUE.
+      ENDIF.
+
+      DATA(ls_key) = VALUE zif_hrbnk_bank_key=>ty_key(
+        pernr = <k>-pernr subty = <k>-subty objps = <k>-objps sprps = <k>-sprps endda = <k>-endda begda = <k>-begda ).
+
+      DATA(ls_return) TYPE bapireturn1.
+      DATA(lv_ok) = abap_false.
+
+      zcl_hrbnk_hr_gateway=>modify_current_record(
+        EXPORTING
+          is_key   = ls_key
+          iv_bankl = <k>-%param-bankl
+          iv_bankn = <k>-%param-bankn
+        IMPORTING
+          es_return  = ls_return
+          ev_success = lv_ok ).
+
+      IF lv_ok = abap_true.
+        COMMIT WORK AND WAIT.
+        APPEND VALUE #( %tky = <k>-%tky ) TO result.
+      ELSE.
+        ROLLBACK WORK.
+        INSERT VALUE #( %tky = <k>-%tky ) INTO TABLE failed.
+        INSERT VALUE #(
+          %tky = <k>-%tky
+          %msg = cl_abap_behv_message=>create( severity = if_abap_behv_message=>severity-error text = map_bapireturn_to_string( ls_return ) )
+        ) INTO TABLE reported.
+      ENDIF.
+    ENDLOOP.
+  ENDMETHOD.
+
+  METHOD deleteBankAccount.
+    DATA(lv_pernr) = zcl_hrbnk_pernr=>get_pernr_for_user( ).
+    IF lv_pernr IS INITIAL.
+      LOOP AT keys ASSIGNING FIELD-SYMBOL(<k0>).
+        INSERT VALUE #( %tky = <k0>-%tky ) INTO TABLE failed.
+      ENDLOOP.
+      RETURN.
+    ENDIF.
+
+    LOOP AT keys ASSIGNING FIELD-SYMBOL(<k>).
+      IF <k>-pernr <> lv_pernr.
+        INSERT VALUE #( %tky = <k>-%tky ) INTO TABLE failed.
+        CONTINUE.
+      ENDIF.
+
+      DATA(ls_key) = VALUE zif_hrbnk_bank_key=>ty_key(
+        pernr = <k>-pernr subty = <k>-subty objps = <k>-objps sprps = <k>-sprps endda = <k>-endda begda = <k>-begda ).
+
+      DATA(ls_return) TYPE bapireturn1.
+      DATA(lv_ok) = abap_false.
+
+      zcl_hrbnk_hr_gateway=>delete_current_record(
+        EXPORTING
+          is_key = ls_key
+        IMPORTING
+          es_return  = ls_return
+          ev_success = lv_ok ).
+
+      IF lv_ok = abap_true.
+        COMMIT WORK AND WAIT.
+        APPEND VALUE #( %tky = <k>-%tky ) TO result.
+      ELSE.
+        ROLLBACK WORK.
+        INSERT VALUE #( %tky = <k>-%tky ) INTO TABLE failed.
+        INSERT VALUE #(
+          %tky = <k>-%tky
+          %msg = cl_abap_behv_message=>create( severity = if_abap_behv_message=>severity-error text = map_bapireturn_to_string( ls_return ) )
+        ) INTO TABLE reported.
+      ENDIF.
+    ENDLOOP.
+  ENDMETHOD.
+
+ENDCLASS.
+
+*"* NOTE:
+*"* - If cl_abap_behv_message=>create is not available in your release, use the
+*"*   message API suggested by ADT for reported entries.
+*"* - If COMMIT inside MODIFY conflicts with your OData stack configuration, align
+*"*   commit ownership with your HR/Basis team (alternative: nocommit = abap_false).
+
+================================================================================
+ADT FINALIZATION CHECKLIST (still required on your SAP stack)
+================================================================================
+1) Run the behavior implementation wizard and reconcile:
+   - READ method entity casing (bankaccount vs BankAccount)
+   - FAILED / REPORTED table line types and component names (%tky, %msg)
+2) Replace cl_abap_behv_message=>create if your release uses a different factory.
+3) Add a real DCL (recommended) so CDS ACL is not only #CHECK without rules.
+4) Add AUTHORITY-CHECK for HR / PA infotype access in READ and MODIFY paths.
+5) Extend ZT_HRBNK_APPPAR with BANKS (optional column) or keep fallback 'KR' in gateway.
+6) “Account type” UI field: not present in your SAP GUI code; add only after HR/DDIC decision.
+
+================================================================================
+ACCESS CONTROL (DCL)
+================================================================================
+Implement a dedicated access control role for ZC_HRBNK_BANKACC in ADT (DCL).
+Typical HR checks combine CDS ACL with explicit AUTHORITY-CHECK in the behavior
+implementation (READ / MODIFY) against your infotype / personnel area objects.
+
+Do not ship `where true` placeholders to production.
+
+================================================================================
+SERVICE BINDING (MANUAL IN ADT — NO XML IN THIS DELIVERABLE)
+================================================================================
+- Create OData V4, binding type "OData V4 - UI", based on ZUI_HRBNK_BANKACC.
+- Publish a local endpoint (or system alias per your landscape rules).
+- Open Preview from the service binding editor.
+
+================================================================================
+FIORI PREVIEW TEST STEPS (REPRESENTATIVE)
+================================================================================
+1) Activate all objects; fix any DDIC activation errors first (especially ZT_HRBNK_APPPAR).
+2) Publish the OData V4 UI service binding.
+3) Preview -> List Report should load only the resolved PERNR rows.
+4) Filter by bankl / bankn (selection fields).
+5) Value help on bankl should list ZI_HRBNK_BANK_VH rows for configured BUKRS/ZCODE_GRUP.
+6) Execute Change action -> enter bankl/bankn -> confirm -> verify GET reflects changes.
+7) Execute Delete action -> confirm -> verify row disappears after refresh.
+
+================================================================================
+END OF FILE
+================================================================================
