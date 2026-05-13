@@ -95,14 +95,17 @@ CDS:
   used by behaviors; CDS uses the **same values as literals** in join/WHERE (view entities cannot call ABAP).
 - ZI_HRBNK_BANKACC — root: PA0009 joined to ZTHR0021 on BANKL / BUKRS / ZCODE_GRUP / validity (**no mandt**, no config table).
 - ZI_HRBNK_BANK_VH — bank value help on ZTHR0021 with same filters (**no mandt** in projection).
+- **ZI_HRBNK_A_CHANGE_BANKACC_P** — CDS **abstract entity** holding `bankl`, `bankn` for the
+  `changeBankAccount` action (BDL does **not** allow inline `parameters { bankl; … }`; use `parameter <entity>`).
 - ZC_HRBNK_BANKACC — consumption projection (service-facing).
 - Metadata extension on ZC_HRBNK_BANKACC — UI.LineItem, UI.SelectionField, Search,
   field groups, critical delete action.
 
 Behavior:
-- ZI_HRBNK_BANKACC behavior definition — unmanaged, **action-only** (no `read;` in BDEF).
-- ZCL_HRBNK_BANKACC_BH — handler: READ filters by PERNR from PA0105 for sy-uname;
-  actions call gateway; map messages to failed/reported.
+- ZI_HRBNK_BANKACC behavior definition — unmanaged, **action-only** (no `read;` in BDEF);
+  **`changeBankAccount`** uses **`parameter ZI_HRBNK_A_CHANGE_BANKACC_P`** (singular `parameter`).
+- ZCL_HRBNK_BANKACC_BH — actions call gateway; PERNR check vs PA0105; map messages to failed/reported;
+  list scope via **DCL** (not `FOR READ` in handler).
 
 Service:
 - ZUI_HRBNK_BANKACC — exposes ZC_HRBNK_BANKACC.
@@ -127,7 +130,7 @@ Messages:
 1. ABAP package (example ZHR_BANK_ACC).
 2. Global constants class **`ZCL_HRBNK_CM`** (maintain **same** BUKRS / ZCODE_GRUP / BANKS here and in CDS literals).
 3. Message class ZHR_BANK_ACC (optional but recommended).
-4. CDS ZI_HRBNK_BANKACC, ZI_HRBNK_BANK_VH, ZC_HRBNK_BANKACC.
+4. CDS ZI_HRBNK_BANKACC, ZI_HRBNK_BANK_VH, abstract entity **ZI_HRBNK_A_CHANGE_BANKACC_P**, ZC_HRBNK_BANKACC.
 5. Metadata extension CDS for ZC_HRBNK_BANKACC.
 6. Behavior definition ZI_HRBNK_BANKACC + implementation class ZCL_HRBNK_BANKACC_BH.
 7. Service definition ZUI_HRBNK_BANKACC + OData V4 UI service binding.
@@ -213,6 +216,19 @@ where
   and Bnk.endda       >= $session.system_date
 
 ================================================================================
+CDS — ABSTRACT ENTITY ZI_HRBNK_A_CHANGE_BANKACC_P (action input type)
+================================================================================
+*"* Required by current BDL: instance actions with input use **one** structured type —
+*"* **`parameter` (singular) + abstract entity name**, not `parameters { … }` with
+*"* inline DDIC types. The behavior handler reads **`%param`** (see ZCL_HRBNK_BANKACC_BH).
+@EndUserText.label: 'Parameters for change bank account'
+define abstract entity ZI_HRBNK_A_CHANGE_BANKACC_P
+{
+  bankl : bankl;
+  bankn : bankn;
+}
+
+================================================================================
 CDS — CONSUMPTION PROJECTION ZC_HRBNK_BANKACC
 ================================================================================
 @AccessControl.authorizationCheck: #CHECK
@@ -291,6 +307,11 @@ BEHAVIOR DEFINITION — ZI_HRBNK_BANKACC (latest BDL — NO standalone `read` st
 *"* implement — here: **actions**. Use DCL / CDS row-level rules to limit rows to the
 *"* employee (replaces a former custom `FOR READ` filter).
 *"*
+*"* **Action parameters:** use **`parameter` (singular)** and a **CDS abstract entity**
+*"* (`ZI_HRBNK_A_CHANGE_BANKACC_P`). Words **`parameters`**, inline **`type bankl`**
+*"* blocks, and **`result` after a malformed parameter block** cause strict (2) errors
+*"* like: "parameter was expected, not parameters".
+*"*
 (Use a second ADT object for ZC — do not merge root + projection into one .bdef file.)
 
 unmanaged implementation in class ZCL_HRBNK_BANKACC_BH unique;
@@ -298,11 +319,7 @@ strict( 2 );
 
 define behavior for ZI_HRBNK_BANKACC alias BankAccount
 {
-  action changeBankAccount parameters {
-    bankl type bankl;
-    bankn type bankn;
-  }
-  result [1] $self;
+  action changeBankAccount parameter ZI_HRBNK_A_CHANGE_BANKACC_P result [1] $self;
 
   action deleteBankAccount
   result [1] $self;
@@ -600,6 +617,7 @@ ENDCLASS.
 ADT FINALIZATION CHECKLIST (still required on your SAP stack)
 ================================================================================
 1) **Do not use `read;` in BDEF** on current systems — it is **not** a valid BDL keyword in the entity body; OData reads use **CDS**. Declare **actions** only for `HR_INFOTYPE_OPERATION`.
+2) **Action input:** **`parameter AbstractEntity` (singular)** — create **ZI_HRBNK_A_CHANGE_BANKACC_P**; never `parameters { ... }` with inline types.
 2) **Layering:** `ZC` → **`provider contract transactional_query`**. **`ZI`** → **`provider contract transactional_interface`** (adjust if your release differs). If **`transactional_interface`** fails on **`ZI`**, use a **single** root **`ZC`** with **`as select from`** and attach behavior only there.
 3) Run the behavior implementation wizard and reconcile action **FAILED / REPORTED** types.
 4) Replace cl_abap_behv_message=>create if your release uses a different factory.
