@@ -328,12 +328,16 @@ BEHAVIOR DEFINITION — ZI_HRBNK_BANKACC (latest BDL — NO standalone `read` st
 *` contract* when the parser treats the block as non-root. Uncomment a real **`alias`** (do not leave
 *` //alias <alias_name>` only).
 *"*
+*"* **Interface BDEF (`ZI_…`, same-named unmanaged BDEF on the BO interface view):** use
+*` **`define behavior for ZI_…` only — do not insert `root`**. `define root behavior for` is for
+*` **projection** BDEFs; on **`ZI_…`** ADT reports *"authorization | behavior | own" expected, not "root"*.
+*"*
 (Use a second ADT object for ZC — do not merge root + projection into one .bdef file.)
 
 unmanaged implementation in class ZCL_HRBNK_BANKACC_BH unique;
 strict( 2 );
 
-define root behavior for ZI_HRBNK_BANKACC alias BankAccount
+define behavior for ZI_HRBNK_BANKACC alias BankAccount
 authorization master ( none )
 lock master
 {
@@ -640,7 +644,7 @@ ADT FINALIZATION CHECKLIST (still required on your SAP stack)
 ================================================================================
 1) **Do not use `read;` in BDEF** on current systems — it is **not** a valid BDL keyword in the entity body; OData reads use **CDS**. Declare **actions** only for `HR_INFOTYPE_OPERATION`.
 2) **Action input:** **`parameter AbstractEntity` (singular)** — create **ZI_HRBNK_A_CHANGE_BANKACC_P**; never `parameters { ... }` with inline types. **Activate the abstract entity before** the behavior definition (`Type … is unknown` if missing/inactive/wrong spelling).
-3) **Projection BDEF:** **`define root behavior for ZC_…`** (required with **`strict ( 2 )`** for root projection BOs); keep a real **`alias`**. **`ZI`** BDEF: **`define root behavior for ZI_…`**.
+3) **BDEF `root` keyword:** only on **projection** BDEF — **`define root behavior for ZC_…`**. On **interface** BDEF **`ZI_…`** use **`define behavior for ZI_…`** (no `root`); otherwise *not "root"* parse errors.
 4) **Strict ( 2 ) — auth + lock:** add **`authorization master ( none )`** (or `instance`/`global`) and **`lock master`** before **`{`** on both BDEF files.
 5) **Layering:** `ZC` CDS → **`provider contract transactional_query`**. **`ZI`** → **`provider contract transactional_interface`**. If **`transactional_interface`** fails on **`ZI`**, use a **single** root **`ZC`** with **`as select from`** and attach behavior only there (`inappropriate provider contract` often means ZC root + `transactional_query` mismatch).
 6) Run the behavior implementation wizard and reconcile action **FAILED / REPORTED** types.
