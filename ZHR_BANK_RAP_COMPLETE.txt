@@ -39,7 +39,7 @@ Optional long-term evolution:
 --------------------------------------------------------------------------------
 2) RAP SCENARIO RECOMMENDATION
 --------------------------------------------------------------------------------
-Primary recommendation: UNMANAGED RAP (read + actions).
+Primary recommendation: UNMANAGED RAP (OData actions only; list GET from CDS).
 - Alternative “managed with unmanaged save” is for cases where managed buffer
   still maps to your own tables; here the physical table is standard HR and the
   save API is HR — unmanaged actions + explicit service layer is clearer and
@@ -100,7 +100,7 @@ CDS:
   field groups, critical delete action.
 
 Behavior:
-- ZI_HRBNK_BANKACC behavior definition — unmanaged, read + two instance actions.
+- ZI_HRBNK_BANKACC behavior definition — unmanaged, **action-only** (no `read;` in BDEF).
 - ZCL_HRBNK_BANKACC_BH — handler: READ filters by PERNR from PA0105 for sy-uname;
   actions call gateway; map messages to failed/reported.
 
@@ -283,17 +283,21 @@ annotate view ZC_HRBNK_BANKACC with
    - Row/action styling: add a dedicated CDS element + annotate criticality as string path per SAP samples (no #High on DataFieldForAction). */
 
 ================================================================================
-BEHAVIOR DEFINITION — ZI_HRBNK_BANKACC (ADT object ZI_HRBNK_BANKACC.bdef only)
+BEHAVIOR DEFINITION — ZI_HRBNK_BANKACC (latest BDL — NO standalone `read` statement)
 ================================================================================
+*"* Current ABAP Behavior Definition Language does **not** list `read` as an entity-body
+*"* keyword (strict parser error on `read;`). Query (GET list / read by key) is served by
+*"* the CDS runtime on **ZI/ZC**; the BDEF declares **only** transactional operations you
+*"* implement — here: **actions**. Use DCL / CDS row-level rules to limit rows to the
+*"* employee (replaces a former custom `FOR READ` filter).
+*"*
 (Use a second ADT object for ZC — do not merge root + projection into one .bdef file.)
 
 unmanaged implementation in class ZCL_HRBNK_BANKACC_BH unique;
-strict ( 2 );
+strict( 2 );
 
 define behavior for ZI_HRBNK_BANKACC alias BankAccount
 {
-  read;
-
   action changeBankAccount parameters {
     bankl type bankl;
     bankn type bankn;
@@ -308,11 +312,10 @@ define behavior for ZI_HRBNK_BANKACC alias BankAccount
 BEHAVIOR DEFINITION (projection) — ZC_HRBNK_BANKACC (separate ADT object ZC_HRBNK_BANKACC.bdef)
 ================================================================================
 projection;
-strict ( 2 );
+strict( 2 );
 
 define behavior for ZC_HRBNK_BANKACC alias BankAccount
 {
-  use read;
   use action changeBankAccount;
   use action deleteBankAccount;
 }
@@ -466,19 +469,13 @@ ENDCLASS.
 ================================================================================
 ABAP — ZCL_HRBNK_BANKACC_BH (RAP behavior implementation)
 ================================================================================
-*"* IMPORTANT:
-*"* Create/activate the behavior definition first, then use ADT:
-*"*   Behavior Definition (ZI_HRBNK_BANKACC) -> "Implement Behavior Class"
-*"* ADT generates exact method signatures (READ / ACTION) and FAILED/REPORTED types.
-*"* Align method names and FAILED/REPORTED table types with the generated interface.
+*"* Create/activate the behavior definition first, then ADT: Implement Behavior Class.
+*"* Action-only BDEF: implement change/delete only; OData GET uses CDS — add DCL for row scope.
 
 CLASS zcl_hrbnk_bankacc_bh DEFINITION PUBLIC FINAL CREATE PUBLIC .
   PUBLIC SECTION.
     INTERFACES if_abap_behavior_handler .
   PRIVATE SECTION.
-
-    METHODS read FOR READ
-      IMPORTING keys FOR READ bankaccount RESULT result.
 
     METHODS changeBankAccount FOR MODIFY
       IMPORTING keys FOR ACTION BankAccount~changeBankAccount RESULT result
@@ -503,34 +500,6 @@ CLASS zcl_hrbnk_bankacc_bh IMPLEMENTATION.
     MESSAGE ID is_return-id TYPE 'S' NUMBER is_return-number
       WITH is_return-message_v1 is_return-message_v2 is_return-message_v3 is_return-message_v4
       INTO rv_text.
-  ENDMETHOD.
-
-  METHOD read.
-    DATA(lv_pernr) = zcl_hrbnk_pernr=>get_pernr_for_user( ).
-    IF lv_pernr IS INITIAL.
-      CLEAR result.
-      RETURN.
-    ENDIF.
-
-    IF keys IS INITIAL.
-      SELECT FROM zi_hrbnk_bankacc
-        FIELDS *
-        WHERE pernr = @lv_pernr
-        INTO CORRESPONDING FIELDS OF TABLE @result.
-    ELSE.
-      SELECT FROM zi_hrbnk_bankacc
-        FIELDS *
-        FOR ALL ENTRIES IN @keys
-        WHERE pernr = @keys-pernr
-          AND subty = @keys-subty
-          AND objps = @keys-objps
-          AND sprps = @keys-sprps
-          AND endda = @keys-endda
-          AND begda = @keys-begda
-        INTO CORRESPONDING FIELDS OF TABLE @result.
-
-      DELETE result WHERE pernr <> lv_pernr.
-    ENDIF.
   ENDMETHOD.
 
   METHOD changeBankAccount.
@@ -630,24 +599,21 @@ ENDCLASS.
 ================================================================================
 ADT FINALIZATION CHECKLIST (still required on your SAP stack)
 ================================================================================
-1) **Layering:** `ZC` uses **`provider contract transactional_query`** (projection). The base root **`ZI`** must use **`provider contract transactional_interface`** — **not** `transactional_query`. Putting only `transactional_query` on the projection does not fix `define behavior for ZI`; the parser still validates **ZI**. Using `transactional_query` on a **non-projection** root (`as select from`) is wrong and can keep `read` from activating.
-2) Activate **ZI** before the behavior definition. If **`transactional_interface`** is rejected on your release for a direct table view, simplify: **one** root **`ZC`** with `as select from` + `transactional_query` and attach behavior only to **`ZC`** (no separate `ZI` BO).
-3) Run the behavior implementation wizard and reconcile:
-   - READ method entity casing (bankaccount vs BankAccount)
-   - FAILED / REPORTED table line types and component names (%tky, %msg)
+1) **Do not use `read;` in BDEF** on current systems — it is **not** a valid BDL keyword in the entity body; OData reads use **CDS**. Declare **actions** only for `HR_INFOTYPE_OPERATION`.
+2) **Layering:** `ZC` → **`provider contract transactional_query`**. **`ZI`** → **`provider contract transactional_interface`** (adjust if your release differs). If **`transactional_interface`** fails on **`ZI`**, use a **single** root **`ZC`** with **`as select from`** and attach behavior only there.
+3) Run the behavior implementation wizard and reconcile action **FAILED / REPORTED** types.
 4) Replace cl_abap_behv_message=>create if your release uses a different factory.
-5) Add a real DCL (recommended) so CDS ACL is not only #CHECK without rules.
-6) Add AUTHORITY-CHECK for HR / PA infotype access in READ and MODIFY paths.
-7) When BUKRS or ZCODE_GRUP changes for the customer: edit **ZCL_HRBNK_CM** and **both CDS literals**
-   (`ZI_HRBNK_BANKACC`, `ZI_HRBNK_BANK_VH`) in one transport.
-8) “Account type” UI field: not present in your SAP GUI code; add only after HR/DDIC decision.
+5) Add **DCL** (or other row scope) so users only see **their** `PERNR` — required because **`FOR READ`** is no longer used for filtering.
+6) Add AUTHORITY-CHECK for HR / PA in **action** handlers (and DCL for list).
+7) When BUKRS or ZCODE_GRUP changes: edit **ZCL_HRBNK_CM** **and** CDS literals on **`ZI_HRBNK_BANKACC`**, **`ZI_HRBNK_BANK_VH`**.
+8) “Account type” UI field: add only after HR/DDIC decision.
 
 ================================================================================
 ACCESS CONTROL (DCL)
 ================================================================================
 Implement a dedicated access control role for ZC_HRBNK_BANKACC in ADT (DCL).
-Typical HR checks combine CDS ACL with explicit AUTHORITY-CHECK in the behavior
-implementation (READ / MODIFY) against your infotype / personnel area objects.
+Typical HR checks combine **DCL** (who sees which `PERNR` rows) with explicit
+`AUTHORITY-CHECK` in **action** handlers for infotype maintenance.
 
 Do not ship `where true` placeholders to production.
 
