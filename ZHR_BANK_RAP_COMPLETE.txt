@@ -314,23 +314,21 @@ BEHAVIOR DEFINITION — ZI_HRBNK_BANKACC (latest BDL — NO standalone `read` st
 *"* blocks, and **`result` after a malformed parameter block** cause strict (2) errors
 *"* like: "parameter was expected, not parameters".
 *"*
-*"* **Strict ( 2 ) — mandatory characteristics:** declare **`authorization master`** and
-*"* **`lock master`** (between `define behavior for …` and `{`). Omitting them produces
-*"* ADT errors: every entity must be authorization master or dependent; lock master or dependent.
-*"* Use **`authorization master ( none )`** only if framework-level RAP auth is intentionally
-*"* deferred (you still use DCL + `AUTHORITY-CHECK` / PERNR checks in actions). Switch to
-*"* **`authorization master ( instance )`** (or `( global )`) when you implement
-*"* `FOR INSTANCE FEATURES`/authorization as per SAP help — instance mode requires matching
-*"* handler signatures on your stack.
+*"* **Strict ( 2 ) — authorization + lock:** each entity needs **`authorization master`** and **`lock master`**
+*"* after the `define behavior for … alias …` line and **before** **`{`**.
 *"*
-*"* **Projection BDEF (`ZC_…`):** with **`strict ( 2 )`**, use **`define root behavior for`** (not plain
-*` define behavior for`). Otherwise ADT errors: *behavior needs root entity* / *inappropriate provider
-*` contract* when the parser treats the block as non-root. Uncomment a real **`alias`** (do not leave
-*` //alias <alias_name>` only).
+*"* **Authorization:** parsers differ — **`authorization master ( none )`** fails on strict stacks such as
+*"* S/4 Embedded (`"global | instance" expected, not "none"`). Use **`authorization master ( global )`**
+*"* in the blueprint snippets unless you deliberately use **`authorization master ( instance )`** with the
+*"* generated **instance-authorization** handler includes from ADT.
+*"* Keep **AUTHORITY-CHECK**, DCL row scope, and PERNR/action checks aligned with the mode you declare.
 *"*
-*"* **Interface BDEF (`ZI_…`, same-named unmanaged BDEF on the BO interface view):** use
-*` **`define behavior for ZI_…` only — do not insert `root`**. `define root behavior for` is for
-*` **projection** BDEFs; on **`ZI_…`** ADT reports *"authorization | behavior | own" expected, not "root"*.
+*"* **`define` / `root`:** **`ZI`** BDEF is always **`define behavior for ZI_…`** (**no** word **`root`**).
+*"* **`ZC`** projection BDEF is normally **`define behavior for ZC_…`** (**no** **`root`**) when the parser rejects
+*"* *"authorization \| behavior \| own" … not `"root"`*. Try **`define root behavior for ZC_…`** **only** if ADT
+*"* reported *must define behavior for root* on the projection file.
+*"*
+*"* Use a **real** **`alias`** line (do not leave wizard `//alias <alias_name>` comments as the only alias).
 *"*
 (Use a second ADT object for ZC — do not merge root + projection into one .bdef file.)
 
@@ -338,7 +336,7 @@ unmanaged implementation in class ZCL_HRBNK_BANKACC_BH unique;
 strict( 2 );
 
 define behavior for ZI_HRBNK_BANKACC alias BankAccount
-authorization master ( none )
+authorization master ( global )
 lock master
 {
   action changeBankAccount parameter ZI_HRBNK_A_CHANGE_BANKACC_P result [1] $self;
@@ -350,13 +348,14 @@ lock master
 ================================================================================
 BEHAVIOR DEFINITION (projection) — ZC_HRBNK_BANKACC (separate ADT object ZC_HRBNK_BANKACC.bdef)
 ================================================================================
-*"* Must be **root** behavior projection: **`define root behavior for`**. Keep **`alias`** on the same
-*"* line (or next) as the entity name — wizards sometimes leave `//alias` commented.
+*"* **Projection BDEF:** **`define behavior for ZC_…`** matches most embedded parsers; add **`root`**
+*"* only if ADT rejects without it. Keep **`authorization master ( global )`** or **`( instance )`** —
+*"* same rules as **ZI** (**`none`** may be rejected).
 projection;
 strict( 2 );
 
-define root behavior for ZC_HRBNK_BANKACC alias BankAccount
-authorization master ( none )
+define behavior for ZC_HRBNK_BANKACC alias BankAccount
+authorization master ( global )
 lock master
 {
   use action changeBankAccount;
@@ -636,16 +635,18 @@ ENDCLASS.
 *"* NOTE:
 *"* - If cl_abap_behv_message=>create is not available in your release, use the
 *"*   message API suggested by ADT for reported entries.
-*"* - If COMMIT inside MODIFY conflicts with your OData stack configuration, align
-*"*   commit ownership with your HR/Basis team (alternative: nocommit = abap_false).
+*"* - With **`authorization master ( global )`**, ADT activation may prompt you to generate
+*"*   **`get_global_authorizations` / … FOR GLOBAL AUTHORIZATION`** stubs in **`ZCL_HRBNK_BANKACC_BH`**
+*"*   — accept the SAP quick fix before final activation; place real **`AUTHORITY-CHECK`** checks there
+*"*   (or keep **allowed** and enforce only in action bodies if your security team accepts that split).
 
 ================================================================================
 ADT FINALIZATION CHECKLIST (still required on your SAP stack)
 ================================================================================
 1) **Do not use `read;` in BDEF** on current systems — it is **not** a valid BDL keyword in the entity body; OData reads use **CDS**. Declare **actions** only for `HR_INFOTYPE_OPERATION`.
 2) **Action input:** **`parameter AbstractEntity` (singular)** — create **ZI_HRBNK_A_CHANGE_BANKACC_P**; never `parameters { ... }` with inline types. **Activate the abstract entity before** the behavior definition (`Type … is unknown` if missing/inactive/wrong spelling).
-3) **BDEF `root` keyword:** only on **projection** BDEF — **`define root behavior for ZC_…`**. On **interface** BDEF **`ZI_…`** use **`define behavior for ZI_…`** (no `root`); otherwise *not "root"* parse errors.
-4) **Strict ( 2 ) — auth + lock:** add **`authorization master ( none )`** (or `instance`/`global`) and **`lock master`** before **`{`** on both BDEF files.
+3) **`root` keyword:** **`define behavior for`** on **`ZI`** (never **`root`**). **`define behavior for ZC`** on embedded stacks that reject **`define root …`** (*"authorization \| behavior \| own"*, not **`root`**). **`define root behavior for ZC`** only if ADT insists *root entity*.
+4) **`strict ( 2 )` auth wording:** **`authorization master ( global )`** or **`( instance )`** — many stacks (**S/4J**) reject **`( none )`**. Prefer **`global`** unless you formalize **`FOR INSTANCE AUTHORIZATION`**. **`lock master`** on both **`ZI`** and **`ZC`** BDEFs before **`{`**.
 5) **Layering:** `ZC` CDS → **`provider contract transactional_query`**. **`ZI`** → **`provider contract transactional_interface`**. If **`transactional_interface`** fails on **`ZI`**, use a **single** root **`ZC`** with **`as select from`** and attach behavior only there (`inappropriate provider contract` often means ZC root + `transactional_query` mismatch).
 6) Run the behavior implementation wizard and reconcile action **FAILED / REPORTED** types.
 7) Replace cl_abap_behv_message=>create if your release uses a different factory.
