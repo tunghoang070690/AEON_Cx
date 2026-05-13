@@ -163,14 +163,14 @@ CDS — ZI_HRBNK_BANKACC (root view entity)
 @AccessControl.authorizationCheck: #CHECK
 @EndUserText.label: 'HR Bank Account (IT0009) read model'
 @Metadata.allowExtensions: true
-// Required for RAP behavior definition (read + actions) on this root entity.
+// BUKRS / ZCODE_GRUP literals must match ZCL_HRBNK_CM.
 define root view entity ZI_HRBNK_BANKACC
-  provider contract transactional_query
+  provider contract transactional_interface
   as select from pa0009 as P9
     left outer join zthr0021 as Bnk
       on  Bnk.zcode      = P9.bankl
-      and Bnk.bukrs      = '1000'        " <-- same as ZCL_HRBNK_CM=>mc_bukrs
-      and Bnk.zcode_grup = 'A004'       " <-- same as ZCL_HRBNK_CM=>mc_zcode_grup
+      and Bnk.bukrs      = '1000'
+      and Bnk.zcode_grup = 'A004'
       and Bnk.begda      <= $session.system_date
       and Bnk.endda      >= $session.system_date
 {
@@ -195,6 +195,7 @@ CDS — VALUE HELP ZI_HRBNK_BANK_VH
 ================================================================================
 @AccessControl.authorizationCheck: #CHECK
 @EndUserText.label: 'Bank key value help (ZTHR0021)'
+// BUKRS / ZCODE_GRUP literals must match ZCL_HRBNK_CM.
 define view entity ZI_HRBNK_BANK_VH
   as select from zthr0021 as Bnk
 {
@@ -206,8 +207,8 @@ define view entity ZI_HRBNK_BANK_VH
       Bnk.zcode_text1 as BankText
 }
 where
-      Bnk.bukrs       = '1000'           " <-- same as ZCL_HRBNK_CM=>mc_bukrs
-  and Bnk.zcode_grup = 'A004'           " <-- same as ZCL_HRBNK_CM=>mc_zcode_grup
+      Bnk.bukrs        = '1000'
+  and Bnk.zcode_grup   = 'A004'
   and Bnk.begda       <= $session.system_date
   and Bnk.endda       >= $session.system_date
 
@@ -629,16 +630,17 @@ ENDCLASS.
 ================================================================================
 ADT FINALIZATION CHECKLIST (still required on your SAP stack)
 ================================================================================
-1) **Root CDS `ZI_HRBNK_BANKACC` must include** `provider contract transactional_query` **before** the behavior definition can activate (`read` / actions). Without it, ADT often reports a parse error on the `read` line.
-2) Run the behavior implementation wizard and reconcile:
+1) **Layering:** `ZC` uses **`provider contract transactional_query`** (projection). The base root **`ZI`** must use **`provider contract transactional_interface`** — **not** `transactional_query`. Putting only `transactional_query` on the projection does not fix `define behavior for ZI`; the parser still validates **ZI**. Using `transactional_query` on a **non-projection** root (`as select from`) is wrong and can keep `read` from activating.
+2) Activate **ZI** before the behavior definition. If **`transactional_interface`** is rejected on your release for a direct table view, simplify: **one** root **`ZC`** with `as select from` + `transactional_query` and attach behavior only to **`ZC`** (no separate `ZI` BO).
+3) Run the behavior implementation wizard and reconcile:
    - READ method entity casing (bankaccount vs BankAccount)
    - FAILED / REPORTED table line types and component names (%tky, %msg)
-3) Replace cl_abap_behv_message=>create if your release uses a different factory.
-4) Add a real DCL (recommended) so CDS ACL is not only #CHECK without rules.
-5) Add AUTHORITY-CHECK for HR / PA infotype access in READ and MODIFY paths.
-6) When BUKRS or ZCODE_GRUP changes for the customer: edit **ZCL_HRBNK_CM** and **both CDS literals**
+4) Replace cl_abap_behv_message=>create if your release uses a different factory.
+5) Add a real DCL (recommended) so CDS ACL is not only #CHECK without rules.
+6) Add AUTHORITY-CHECK for HR / PA infotype access in READ and MODIFY paths.
+7) When BUKRS or ZCODE_GRUP changes for the customer: edit **ZCL_HRBNK_CM** and **both CDS literals**
    (`ZI_HRBNK_BANKACC`, `ZI_HRBNK_BANK_VH`) in one transport.
-7) “Account type” UI field: not present in your SAP GUI code; add only after HR/DDIC decision.
+8) “Account type” UI field: not present in your SAP GUI code; add only after HR/DDIC decision.
 
 ================================================================================
 ACCESS CONTROL (DCL)
