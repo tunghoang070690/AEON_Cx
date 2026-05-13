@@ -14,8 +14,8 @@ Customer constraints: no BAS / no freestyle UI5 — UI only via FE Preview on OD
   on the entity, so Fiori Elements Preview can show action buttons and dialogs
   without custom UI5.
 - Service layer: dedicated repository + HR gateway classes wrapping SAP HR APIs.
-- Configuration: transparent table ZT_HRBNK_APPPAR (single row per client) holds
-  BUKRS and ZCODE_GRUP — no literals in code paths that must vary by customer.
+- Company / bank list scope: centralized in ABAP global class **`ZCL_HRBNK_CM`** constants
+  (and matching **literals in CDS**) — no custom parameter table unless you introduce one later.
 
 Why not “managed RAP on PA0009”?
 - Managed persistence would let the RAP runtime issue direct INSERT/UPDATE/DELETE
@@ -91,10 +91,10 @@ Primary recommendation: UNMANAGED RAP (read + actions).
 4–11) CONSOLIDATED DESIGN (CDS / BEHAVIOR / SERVICE / VH / ACTIONS / AUTH / MSGS)
 --------------------------------------------------------------------------------
 CDS:
-- ZT_HRBNK_APPPAR (transparent) — config (BUKRS, ZCODE_GRUP).
-- ZI_HRBNK_BANKACC — root view entity: PA0009 + join ZTHR0021 + join ZT_HRBNK_APPPAR
-  for validity + company/group scoping.
-- ZI_HRBNK_BANK_VH — value help view on ZTHR0021 filtered by config row + dates.
+- ZCL_HRBNK_CM (ABAP constants class): single maintenance point for BUKRS, ZCODE_GRUP, BANKS
+  used by behaviors; CDS uses the **same values as literals** in join/WHERE (view entities cannot call ABAP).
+- ZI_HRBNK_BANKACC — root: PA0009 joined to ZTHR0021 on BANKL / BUKRS / ZCODE_GRUP / validity (**no mandt**, no config table).
+- ZI_HRBNK_BANK_VH — bank value help on ZTHR0021 with same filters (**no mandt** in projection).
 - ZC_HRBNK_BANKACC — consumption projection (service-facing).
 - Metadata extension on ZC_HRBNK_BANKACC — UI.LineItem, UI.SelectionField, Search,
   field groups, critical delete action.
@@ -125,7 +125,7 @@ Messages:
 12) OBJECT CREATION SEQUENCE (ADT)
 --------------------------------------------------------------------------------
 1. ABAP package (example ZHR_BANK_ACC).
-2. Table ZT_HRBNK_APPPAR (see DDL section) + maintain one row.
+2. Global constants class **`ZCL_HRBNK_CM`** (maintain **same** BUKRS / ZCODE_GRUP / BANKS here and in CDS literals).
 3. Message class ZHR_BANK_ACC (optional but recommended).
 4. CDS ZI_HRBNK_BANKACC, ZI_HRBNK_BANK_VH, ZC_HRBNK_BANKACC.
 5. Metadata extension CDS for ZC_HRBNK_BANKACC.
@@ -142,20 +142,20 @@ Messages:
 - Delete action: confirm (browser / FE confirmation if annotated critical).
 
 ================================================================================
-DDIC — CONFIG TABLE (create via ADT Data Definition or SE11)
+ABAP — ZCL_HRBNK_CM (central constants; keep CDS literals identical)
 ================================================================================
-Table name: ZT_HRBNK_APPPAR
-Delivery class: C (customer)
-Table maintenance: allow via SM30 if desired
+*"* CDS view entities cannot read this class — duplicate values as literals only in CDS.
+*"* Change here AND in ZI_HRBNK_BANKACC / ZI_HRBNK_BANK_VH whenever customer scope changes.
 
-Fields (example):
-- MANDT      CLNT  NOT NULL key
-- BUKRS      BUKRS NOT NULL key
-- ZCODE_GRUP ZTHR0021-ZCODE_GRUP NOT NULL
-- BANKS      BANKS OPTIONAL (recommended: move country bank key out of hardcoded constants)
+CLASS zcl_hrbnk_cm DEFINITION PUBLIC FINAL CREATE PUBLIC .
+  PUBLIC SECTION.
+    CONSTANTS mc_bukrs      TYPE bukrs VALUE '1000'.
+    CONSTANTS mc_zcode_grup TYPE zthr0021-zcode_grup VALUE 'A004'.
+    CONSTANTS mc_banks      TYPE banks VALUE 'KR'.
+ENDCLASS.
 
-Maintain exactly one row per MANDT for the join pattern used in the CDS below. If you
-need multiple company codes per client, change the key design and adjust the CDS join.
+CLASS zcl_hrbnk_cm IMPLEMENTATION.
+ENDCLASS.
 
 ================================================================================
 CDS — ZI_HRBNK_BANKACC (root view entity)
@@ -164,15 +164,13 @@ CDS — ZI_HRBNK_BANKACC (root view entity)
 @EndUserText.label: 'HR Bank Account (IT0009) read model'
 @Metadata.allowExtensions: true
 define root view entity ZI_HRBNK_BANKACC
-  as select from    pa0009                 as P9
-    inner join      zt_hrbnk_apppar       as Cfg on  Cfg.mandt = $session.client
-    left outer join zthr0021               as Bnk
-      on  Bnk.mandt       = P9.mandt
-      and Bnk.zcode       = P9.bankl
-      and Bnk.bukrs       = Cfg.bukrs
-      and Bnk.zcode_grup  = Cfg.zcode_grup
-      and Bnk.begda       <= $session.system_date
-      and Bnk.endda       >= $session.system_date
+  as select from pa0009 as P9
+    left outer join zthr0021 as Bnk
+      on  Bnk.zcode      = P9.bankl
+      and Bnk.bukrs      = '1000'        " <-- same as ZCL_HRBNK_CM=>mc_bukrs
+      and Bnk.zcode_grup = 'A004'       " <-- same as ZCL_HRBNK_CM=>mc_zcode_grup
+      and Bnk.begda      <= $session.system_date
+      and Bnk.endda      >= $session.system_date
 {
       key P9.pernr,
       key P9.subty,
@@ -196,22 +194,20 @@ CDS — VALUE HELP ZI_HRBNK_BANK_VH
 @AccessControl.authorizationCheck: #CHECK
 @EndUserText.label: 'Bank key value help (ZTHR0021)'
 define view entity ZI_HRBNK_BANK_VH
-  as select from    zthr0021         as Bnk
-    inner join      zt_hrbnk_apppar  as Cfg on Cfg.mandt = $session.client
+  as select from zthr0021 as Bnk
 {
-  key Bnk.mandt,
-  key Bnk.bukrs,
-  key Bnk.zcode_grup,
-  key Bnk.zcode,
-  key Bnk.begda,
-  key Bnk.endda,
-      Bnk.zcode_text1
+      key Bnk.bukrs,
+      key Bnk.zcode_grup,
+      key Bnk.zcode,
+      key Bnk.begda,
+      key Bnk.endda,
+      Bnk.zcode_text1 as BankText
 }
 where
-      Bnk.bukrs      = Cfg.bukrs
-  and Bnk.zcode_grup = Cfg.zcode_grup
-  and Bnk.begda      <= $session.system_date
-  and Bnk.endda      >= $session.system_date
+      Bnk.bukrs       = '1000'           " <-- same as ZCL_HRBNK_CM=>mc_bukrs
+  and Bnk.zcode_grup = 'A004'           " <-- same as ZCL_HRBNK_CM=>mc_zcode_grup
+  and Bnk.begda       <= $session.system_date
+  and Bnk.endda       >= $session.system_date
 
 ================================================================================
 CDS — CONSUMPTION PROJECTION ZC_HRBNK_BANKACC
@@ -252,7 +248,10 @@ annotate view ZC_HRBNK_BANKACC with
   @UI.selectionField: [{ position: 10 }]
   @Consumption.valueHelpDefinition: [{
     entity: { name: 'ZI_HRBNK_BANK_VH', element: 'zcode' },
-    additionalBinding: [{ localElement: 'bankl', element: 'zcode' }]
+    additionalBinding: [
+      { localElement: 'bankl', element: 'zcode' },
+      { localElement: 'BankName', element: 'BankText' }
+    ]
   }]
   bankl;
 
@@ -321,26 +320,6 @@ define service ZUI_HRBNK_BANKACC {
 }
 
 ================================================================================
-ABAP — ZCL_HRBNK_CONFIG (optional if you refuse DDIC config table reads outside CDS)
-================================================================================
-*"* USE THIS READ CLASS ONLY IF YOU NEED ABAP-SIDE CONFIG WITHOUT CDS JOIN
-CLASS zcl_hrbnk_config DEFINITION PUBLIC FINAL CREATE PUBLIC .
-  PUBLIC SECTION.
-    CLASS-METHODS read_single
-      EXPORTING
-        es_cfg TYPE zt_hrbnk_apppar .
-ENDCLASS.
-
-CLASS zcl_hrbnk_config IMPLEMENTATION.
-  METHOD read_single.
-    SELECT SINGLE *
-      FROM zt_hrbnk_apppar
-      INTO @es_cfg
-      WHERE mandt = @sy-mandt.
-  ENDMETHOD.
-ENDCLASS.
-
-================================================================================
 ABAP — ZCL_HRBNK_PERNR (resolve PERNR for current user)
 ================================================================================
 CLASS zcl_hrbnk_pernr DEFINITION PUBLIC FINAL CREATE PUBLIC .
@@ -390,10 +369,6 @@ CLASS zcl_hrbnk_hr_gateway DEFINITION PUBLIC FINAL CREATE PUBLIC .
   PUBLIC SECTION.
     CONSTANTS mc_infty TYPE infty VALUE '0009'.
 
-    CLASS-METHODS read_banks_from_config
-      EXPORTING
-        es_banks TYPE banks .
-
     CLASS-METHODS modify_current_record
       IMPORTING
         is_key   TYPE zif_hrbnk_bank_key=>ty_key
@@ -413,21 +388,11 @@ ENDCLASS.
 
 CLASS zcl_hrbnk_hr_gateway IMPLEMENTATION.
 
-  METHOD read_banks_from_config.
-    SELECT SINGLE banks
-      FROM zt_hrbnk_apppar
-      INTO @es_banks
-      WHERE mandt = @sy-mandt.
-    IF sy-subrc <> 0 OR es_banks IS INITIAL.
-      es_banks = 'KR'.
-    ENDIF.
-  ENDMETHOD.
-
   METHOD modify_current_record.
     CLEAR: es_return, ev_success.
 
     DATA(ls_p0009) TYPE p0009.
-    read_banks_from_config( IMPORTING es_banks = ls_p0009-banks ).
+    ls_p0009-banks = zcl_hrbnk_cm=>mc_banks.
 
     ls_p0009-pernr = is_key-pernr.
     ls_p0009-infty = mc_infty.
@@ -665,7 +630,8 @@ ADT FINALIZATION CHECKLIST (still required on your SAP stack)
 2) Replace cl_abap_behv_message=>create if your release uses a different factory.
 3) Add a real DCL (recommended) so CDS ACL is not only #CHECK without rules.
 4) Add AUTHORITY-CHECK for HR / PA infotype access in READ and MODIFY paths.
-5) Extend ZT_HRBNK_APPPAR with BANKS (optional column) or keep fallback 'KR' in gateway.
+5) When BUKRS or ZCODE_GRUP changes for the customer: edit **ZCL_HRBNK_CM** and **both CDS literals**
+   (`ZI_HRBNK_BANKACC`, `ZI_HRBNK_BANK_VH`) in one transport.
 6) “Account type” UI field: not present in your SAP GUI code; add only after HR/DDIC decision.
 
 ================================================================================
@@ -687,11 +653,11 @@ SERVICE BINDING (MANUAL IN ADT — NO XML IN THIS DELIVERABLE)
 ================================================================================
 FIORI PREVIEW TEST STEPS (REPRESENTATIVE)
 ================================================================================
-1) Activate all objects; fix any DDIC activation errors first (especially ZT_HRBNK_APPPAR).
+1) Activate all objects; fix any CDS activation errors (especially **no mandt** in view entities).
 2) Publish the OData V4 UI service binding.
 3) Preview -> List Report should load only the resolved PERNR rows.
 4) Filter by bankl / bankn (selection fields).
-5) Value help on bankl should list ZI_HRBNK_BANK_VH rows for configured BUKRS/ZCODE_GRUP.
+5) Value help on bankl should list **ZI_HRBNK_BANK_VH** rows (BUKRS / ZCODE_GRUP literals = **ZCL_HRBNK_CM**).
 6) Execute Change action -> enter bankl/bankn -> confirm -> verify GET reflects changes.
 7) Execute Delete action -> confirm -> verify row disappears after refresh.
 
