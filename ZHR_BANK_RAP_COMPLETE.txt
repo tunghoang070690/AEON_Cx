@@ -261,8 +261,8 @@ annotate view ZC_HRBNK_BANKACC with
   @UI.lineItem: [
     { position: 10, importance: #HIGH, label: 'Bank Name', value: 'BankName' },
     { position: 20, importance: #HIGH, label: 'Account Number', value: 'bankn' },
-    { position: 90, importance: #HIGH, type: #FOR_ACTION, label: 'Change', action: 'changeBankAccount', invocationGrouping: #ISOLATED },
-    { position: 100, importance: #HIGH, type: #FOR_ACTION, label: 'Delete', action: 'deleteBankAccount', invocationGrouping: #ISOLATED, criticality: #High }
+    { position: 90, importance: #HIGH, type: #FOR_ACTION, label: 'Change', dataAction: 'changeBankAccount' },
+    { position: 100, importance: #HIGH, type: #FOR_ACTION, label: 'Delete', dataAction: 'deleteBankAccount' }
   ]
   pernr;
 
@@ -274,9 +274,10 @@ annotate view ZC_HRBNK_BANKACC with
 };
 
 /* NOTE:
-   - Some UI5 versions expect #FOR_ACTION line items on a visible field; `pernr` is used here as a stable anchor.
-   - If your ADT quick-fix proposes a different annotation variant, follow the quick-fix (preview compatibility is version-sensitive).
-   - Delete confirmation in pure annotations is limited; criticality #High nudges Fiori Elements to treat the action as critical. */
+   - Anchor field: `pernr` (visible column) carries the toolbar-style line-item actions in many FE list reports.
+   - Use `dataAction: 'verbCaseName'` matching the behavior definition action name (camelCase as exposed on OData).
+   - Optional `invocationGrouping` (e.g. #CHANGE_SET) exists on newer stacks — only add if ADT recognizes it.
+   - Row/action styling: add a dedicated CDS element + annotate criticality as string path per SAP samples (no #High on DataFieldForAction). */
 
 ================================================================================
 BEHAVIOR DEFINITION — ZI_HRBNK_BANKACC (save file as ZI_HRBNK_BANKACC.bdef)
