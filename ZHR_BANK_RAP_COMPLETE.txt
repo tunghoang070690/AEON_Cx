@@ -312,12 +312,27 @@ BEHAVIOR DEFINITION — ZI_HRBNK_BANKACC (latest BDL — NO standalone `read` st
 *"* blocks, and **`result` after a malformed parameter block** cause strict (2) errors
 *"* like: "parameter was expected, not parameters".
 *"*
+*"* **Strict ( 2 ) — mandatory characteristics:** declare **`authorization master`** and
+*"* **`lock master`** (between `define behavior for …` and `{`). Omitting them produces
+*"* ADT errors: every entity must be authorization master or dependent; lock master or dependent.
+*"* Use **`authorization master ( none )`** only if framework-level RAP auth is intentionally
+*"* deferred (you still use DCL + `AUTHORITY-CHECK` / PERNR checks in actions). Switch to
+*"* **`authorization master ( instance )`** (or `( global )`) when you implement
+*"* `FOR INSTANCE FEATURES`/authorization as per SAP help — instance mode requires matching
+*"* handler signatures on your stack.
+*"*
+*"* **Unknown type `ZI_HRBNK_A_CHANGE_BANKACC_P`:** create ADT repo object **Data Definition**
+*"* → **Abstract Entity**, exact name as below, **Save + Activate before** activating this BDEF
+*"* (same transport / package as the BO). A typo or inactive CDS keeps the parameter type unknown.
+*"*
 (Use a second ADT object for ZC — do not merge root + projection into one .bdef file.)
 
 unmanaged implementation in class ZCL_HRBNK_BANKACC_BH unique;
 strict( 2 );
 
 define behavior for ZI_HRBNK_BANKACC alias BankAccount
+authorization master ( none )
+lock master
 {
   action changeBankAccount parameter ZI_HRBNK_A_CHANGE_BANKACC_P result [1] $self;
 
@@ -332,6 +347,8 @@ projection;
 strict( 2 );
 
 define behavior for ZC_HRBNK_BANKACC alias BankAccount
+authorization master ( none )
+lock master
 {
   use action changeBankAccount;
   use action deleteBankAccount;
@@ -617,14 +634,15 @@ ENDCLASS.
 ADT FINALIZATION CHECKLIST (still required on your SAP stack)
 ================================================================================
 1) **Do not use `read;` in BDEF** on current systems — it is **not** a valid BDL keyword in the entity body; OData reads use **CDS**. Declare **actions** only for `HR_INFOTYPE_OPERATION`.
-2) **Action input:** **`parameter AbstractEntity` (singular)** — create **ZI_HRBNK_A_CHANGE_BANKACC_P**; never `parameters { ... }` with inline types.
-2) **Layering:** `ZC` → **`provider contract transactional_query`**. **`ZI`** → **`provider contract transactional_interface`** (adjust if your release differs). If **`transactional_interface`** fails on **`ZI`**, use a **single** root **`ZC`** with **`as select from`** and attach behavior only there.
-3) Run the behavior implementation wizard and reconcile action **FAILED / REPORTED** types.
-4) Replace cl_abap_behv_message=>create if your release uses a different factory.
-5) Add **DCL** (or other row scope) so users only see **their** `PERNR` — required because **`FOR READ`** is no longer used for filtering.
-6) Add AUTHORITY-CHECK for HR / PA in **action** handlers (and DCL for list).
-7) When BUKRS or ZCODE_GRUP changes: edit **ZCL_HRBNK_CM** **and** CDS literals on **`ZI_HRBNK_BANKACC`**, **`ZI_HRBNK_BANK_VH`**.
-8) “Account type” UI field: add only after HR/DDIC decision.
+2) **Action input:** **`parameter AbstractEntity` (singular)** — create **ZI_HRBNK_A_CHANGE_BANKACC_P**; never `parameters { ... }` with inline types. **Activate the abstract entity before** the behavior definition (`Type … is unknown` if missing/inactive/wrong spelling).
+3) **Strict ( 2 ) on ZI _and_ ZC BDEF:** add **`authorization master ( none )`** (or `instance`/`global` per your SAP auth design) **`lock master`** between `define behavior for … alias …` **and** `{`.
+4) **Layering:** `ZC` → **`provider contract transactional_query`**. **`ZI`** → **`provider contract transactional_interface`** (adjust if your release differs). If **`transactional_interface`** fails on **`ZI`**, use a **single** root **`ZC`** with **`as select from`** and attach behavior only there.
+5) Run the behavior implementation wizard and reconcile action **FAILED / REPORTED** types.
+6) Replace cl_abap_behv_message=>create if your release uses a different factory.
+7) Add **DCL** (or other row scope) so users only see **their** `PERNR` — required because **`FOR READ`** is no longer used for filtering.
+8) Add AUTHORITY-CHECK for HR / PA in **action** handlers (and DCL for list).
+9) When BUKRS or ZCODE_GRUP changes: edit **ZCL_HRBNK_CM** **and** CDS literals on **`ZI_HRBNK_BANKACC`**, **`ZI_HRBNK_BANK_VH`**.
+10) “Account type” UI field: add only after HR/DDIC decision.
 
 ================================================================================
 ACCESS CONTROL (DCL)
