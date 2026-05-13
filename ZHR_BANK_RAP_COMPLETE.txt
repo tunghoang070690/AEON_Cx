@@ -327,10 +327,17 @@ BEHAVIOR DEFINITION — ZI_HRBNK_BANKACC (latest BDL — NO standalone `read` st
 *"* generated **instance-authorization** handler includes from ADT.
 *"* Keep **AUTHORITY-CHECK**, DCL row scope, and PERNR/action checks aligned with the mode you declare.
 *"*
-*"* **`define` / `root`:** **`ZI`** BDEF is always **`define behavior for ZI_…`** (**no** word **`root`**).
-*"* **`ZC`** projection BDEF is normally **`define behavior for ZC_…`** (**no** **`root`**) when the parser rejects
-*"* *"authorization \| behavior \| own" … not `"root"`*. Try **`define root behavior for ZC_…`** **only** if ADT
-*"* reported *must define behavior for root* on the projection file.
+*"* **`ZI` vs `ZC` grammar:** **`ZI`** unmanaged BDEF is **`define behavior for ZI_…`** (**never**
+*"* insert **`root`** between `define` and `behavior` — wrong object type → *not `"root"`* ).
+*"*
+*"* **`ZC`** projection BDEF **for a root** **`define root view entity ZC_…`** must use
+*"* **`define root behavior for ZC_…`** (with **`projection;`** header). Plain **`define behavior for ZC_…`** on
+*"* a transactional projection root causes ADT errors: **must define behavior for root**, and often
+*"* **inappropriate provider contract**.
+*"*
+*"* **`authorization master` / `lock master`:** declare **only** on **`ZI`**. Omit them on **`ZC`** (inheritance).
+*"* Never combine **`define root behavior for`** on **`ZC`** with **`authorization master …`** (parse error:
+*"* *`"(" expected, not "`master`*).
 *"*
 *"* Use a **real** **`alias`** line (do not leave wizard `//alias <alias_name>` comments as the only alias).
 *"*
@@ -352,12 +359,12 @@ lock master
 ================================================================================
 BEHAVIOR DEFINITION (projection) — ZC_HRBNK_BANKACC (separate ADT object ZC_HRBNK_BANKACC.bdef)
 ================================================================================
-*"* Projection: list **`use`** of operations/actions only (same pattern as SAP BO projection samples —
-*"* **`strict ( 2 )`**). **No **`authorization master`**, **`lock master`**, or **`root`** here** — only on **`ZI`**.
+*"* **`define root behavior for`** is required here (root transactional projection **+** **`transactional_query`**
+*"* CDS **+** **`strict ( 2 )`**). **`use`** only — no **`authorization master`** / **`lock master`** — those stay on **`ZI`**.
 projection;
 strict( 2 );
 
-define behavior for ZC_HRBNK_BANKACC alias BankAccount
+define root behavior for ZC_HRBNK_BANKACC alias BankAccount
 {
   use action changeBankAccount;
   use action deleteBankAccount;
@@ -646,16 +653,15 @@ ADT FINALIZATION CHECKLIST (still required on your SAP stack)
 ================================================================================
 1) **Do not use `read;` in BDEF** on current systems — it is **not** a valid BDL keyword in the entity body; OData reads use **CDS**. Declare **actions** only for `HR_INFOTYPE_OPERATION`.
 2) **Action input:** **`parameter AbstractEntity` (singular)** — create **ZI_HRBNK_A_CHANGE_BANKACC_P**; never `parameters { ... }` with inline types. **Activate the abstract entity before** the behavior definition (`Type … is unknown` if missing/inactive/wrong spelling).
-3) **`root` keyword:** **`define behavior for`** on **`ZI`** (never **`root`**). **`define behavior for ZC`** on embedded stacks that reject **`define root …`** (*"authorization \| behavior \| own"*, not **`root`**). **`define root behavior for ZC`** only if ADT insists *root entity*.
+3) **`Root` wording:** **`define behavior for ZI_…`** (**no** **`root`** on **`ZI`**). **`define root behavior for ZC_…`** on **`ZC`** projection (**root CDS** + **`transactional_query`** + **`strict(2)`**). Do **not** restate **`authorization master`**/**`lock`** on **`ZC`**.
 4) **`strict ( 2 )` authorization:** **`authorization master ( global )`** or **`( instance )`** on **`ZI`** only (**S/4J** rejects **`( none )`**). **`lock master`** on **`ZI`** only.
-5) **`ZC` projection `.bdef`:** **`use action …`** only — **omit** **`authorization master`**, **`lock master`**, and **`root`** (inherit / wrong grammar → *`"(" expected, not "`master`*).
-6) **Layering:** `ZC` CDS → **`provider contract transactional_query`**. **`ZI`** → **`provider contract transactional_interface`**. If **`transactional_interface`** fails on **`ZI`**, use a **single** root **`ZC`** with **`as select from`** and attach behavior only there (`inappropriate provider contract` often means ZC root + `transactional_query` mismatch).
-7) Run the behavior implementation wizard and reconcile action **FAILED / REPORTED** types.
-8) Replace cl_abap_behv_message=>create if your release uses a different factory.
-9) Add **DCL** (or other row scope) so users only see **their** `PERNR` — required because **`FOR READ`** is no longer used for filtering.
-10) Add AUTHORITY-CHECK for HR / PA in **action** handlers (and DCL for list).
-11) When BUKRS or ZCODE_GRUP changes: edit **ZCL_HRBNK_CM** **and** CDS literals on **`ZI_HRBNK_BANKACC`**, **`ZI_HRBNK_BANK_VH`**.
-12) “Account type” UI field: add only after HR/DDIC decision.
+5) **Layering:** `ZC` CDS → **`provider contract transactional_query`**. **`ZI`** → **`provider contract transactional_interface`**. Activate **ZI CDS before ZC**. If **`transactional_interface`** fails on **`ZI`**, use **single root `ZC`** with **`as select from`** and attach behavior there.
+6) Run the behavior implementation wizard and reconcile action **FAILED / REPORTED** types.
+7) Replace cl_abap_behv_message=>create if your release uses a different factory.
+8) Add **DCL** (or other row scope) so users only see **their** `PERNR`.
+9) Add AUTHORITY-CHECK for HR / PA in **action** handlers (and DCL for list).
+10) When BUKRS or ZCODE_GRUP changes: edit **ZCL_HRBNK_CM** **and** CDS literals on **`ZI_HRBNK_BANKACC`**, **`ZI_HRBNK_BANK_VH`**.
+11) “Account type” UI field: add only after HR/DDIC decision.
 
 ================================================================================
 ACCESS CONTROL (DCL)
